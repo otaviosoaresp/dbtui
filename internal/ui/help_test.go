@@ -57,8 +57,11 @@ func TestHelpOverlay_View_Visible(t *testing.T) {
 		"j / k",
 		"d / u",
 		"Tab",
-		"Filter mode",
+		"Fuzzy jump to column",
+		"Record view",
+		"Filter column",
 		"Command mode",
+		"Edit cell",
 		"Quit",
 	}
 

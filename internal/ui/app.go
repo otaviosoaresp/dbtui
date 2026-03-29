@@ -1003,13 +1003,18 @@ func (a App) renderStatusBar() string {
 			hints = append(hints, keyStyle.Render("[H/L]")+descStyle.Render(" Scroll preview"))
 		}
 
-		hints = append(hints, keyStyle.Render("[:]")+descStyle.Render(" Cmd"))
+		hints = append(hints,
+			keyStyle.Render("[c]")+descStyle.Render(" Col"),
+			keyStyle.Render("[v]")+descStyle.Render(" Record"),
+			keyStyle.Render("[:]")+descStyle.Render(" Cmd"),
+			keyStyle.Render("[i]")+descStyle.Render(" Edit"),
+		)
 
 		if len(a.buffers) > 1 {
 			hints = append(hints, keyStyle.Render("[]/[]")+descStyle.Render(" Buf"))
 		}
 
-		hints = append(hints, keyStyle.Render("[q]")+descStyle.Render(" Quit"))
+		hints = append(hints, keyStyle.Render("[?]")+descStyle.Render(" Help"))
 	}
 
 	left := " " + strings.Join(hints, "  ")

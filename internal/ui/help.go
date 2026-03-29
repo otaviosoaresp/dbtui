@@ -34,76 +34,74 @@ func (h HelpOverlay) View() string {
 		return ""
 	}
 
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("6"))
-
-	sectionStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("4")).
-		MarginTop(1)
-
-	keyStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("6")).
-		Bold(true).
-		Width(16)
-
-	descStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("250"))
-
-	dimStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245"))
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4")).MarginTop(1)
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true).Width(16)
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	var lines []string
 
 	lines = append(lines, titleStyle.Render("  dbTUI - Keyboard Shortcuts"))
 	lines = append(lines, "")
 
-	lines = append(lines, sectionStyle.Render("  Normal Mode"))
-	bindings := []struct{ key, desc string }{
-		{"j / k", "Move down / up"},
+	lines = append(lines, sectionStyle.Render("  Navigation"))
+	for _, b := range []struct{ k, d string }{
+		{"j / k", "Move down / up (rows)"},
 		{"h / l", "Move left / right (columns)"},
 		{"g / G", "Jump to top / bottom"},
 		{"d / u", "Page down / up"},
-		{"n / N", "Next / previous data page"},
-		{"Tab", "Switch panel focus"},
+		{"n / N", "Next / previous data page (LIMIT/OFFSET)"},
+		{"Tab", "Switch panel (table list / data grid)"},
 		{"] / [", "Next / previous buffer"},
-	}
-	for _, b := range bindings {
-		lines = append(lines, "  "+keyStyle.Render(b.key)+descStyle.Render(b.desc))
+		{"c", "Fuzzy jump to column"},
+	} {
+		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
 	}
 
 	lines = append(lines, sectionStyle.Render("  Tables & FK"))
-	bindings = []struct{ key, desc string }{
+	for _, b := range []struct{ k, d string }{
 		{"/", "Fuzzy search tables"},
-		{"Enter", "Select table / Follow FK"},
-		{"u", "Go back in FK navigation"},
+		{"Enter", "Select table / Follow FK link"},
+		{"Backspace", "Go back in FK navigation"},
 		{"p", "Toggle FK preview panel"},
-	}
-	for _, b := range bindings {
-		lines = append(lines, "  "+keyStyle.Render(b.key)+descStyle.Render(b.desc))
+		{"H / L", "Scroll FK preview left / right"},
+	} {
+		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
 	}
 
-	lines = append(lines, sectionStyle.Render("  Modes (vim-like)"))
-	bindings = []struct{ key, desc string }{
-		{"f", "Filter mode (filter current column)"},
-		{":", "Command mode (SQL / scripts)"},
-		{"i", "Insert mode (edit cell)"},
-		{"Esc", "Back to Normal mode"},
+	lines = append(lines, sectionStyle.Render("  Views"))
+	for _, b := range []struct{ k, d string }{
+		{"v", "Record view (vertical key-value)"},
+		{"e", "Expand cell content"},
+	} {
+		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
 	}
-	for _, b := range bindings {
-		lines = append(lines, "  "+keyStyle.Render(b.key)+descStyle.Render(b.desc))
+
+	lines = append(lines, sectionStyle.Render("  Filtering"))
+	for _, b := range []struct{ k, d string }{
+		{"f", "Filter column (=, !=, >, <, %like%, null)"},
+		{"x", "Remove filter on current column"},
+		{"F", "Clear all filters"},
+	} {
+		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
+	}
+
+	lines = append(lines, sectionStyle.Render("  Command & Edit"))
+	for _, b := range []struct{ k, d string }{
+		{":", "Command mode (SQL, :run script, :bd, :bn)"},
+		{"i", "Edit cell (INSERT mode, confirm with y/n)"},
+	} {
+		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
 	}
 
 	lines = append(lines, sectionStyle.Render("  Other"))
-	bindings = []struct{ key, desc string }{
-		{"e", "Expand cell content"},
-		{"R", "Refresh schema"},
+	for _, b := range []struct{ k, d string }{
+		{"R", "Refresh schema from database"},
 		{"?", "Toggle this help"},
 		{"q", "Quit"},
-	}
-	for _, b := range bindings {
-		lines = append(lines, "  "+keyStyle.Render(b.key)+descStyle.Render(b.desc))
+	} {
+		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
 	}
 
 	lines = append(lines, "")
@@ -118,9 +116,5 @@ func (h HelpOverlay) View() string {
 		Height(h.height - 4).
 		Padding(1, 2)
 
-	return lipgloss.Place(
-		h.width, h.height,
-		lipgloss.Center, lipgloss.Center,
-		style.Render(content),
-	)
+	return lipgloss.Place(h.width, h.height, lipgloss.Center, lipgloss.Center, style.Render(content))
 }
