@@ -751,8 +751,33 @@ func (a App) handleFollowFK() (tea.Model, tea.Cmd) {
 	})
 
 	refTable := qualifiedRefTable(fk)
-	a.statusMsg = fmt.Sprintf("Following %s -> %s", colName, refTable)
-	return a, a.selectTable(refTable)
+
+	idx := a.ensureBuffer(refTable)
+	a.activeBuffer = idx
+	a.switchFocus(panelDataGrid)
+
+	a.dg().ClearFilters()
+	for i, srcCol := range fk.SourceColumns {
+		if i < len(fk.ReferencedColumns) {
+			val := ""
+			for j, col := range columns {
+				if col == srcCol && j < len(rowValues) {
+					val = rowValues[j]
+					break
+				}
+			}
+			if val != "" {
+				a.dg().AddFilter(db.FilterClause{
+					Column:   fk.ReferencedColumns[i],
+					Operator: "=",
+					Value:    val,
+				})
+			}
+		}
+	}
+
+	a.statusMsg = fmt.Sprintf("Following %s -> %s (filtered)", colName, refTable)
+	return a, a.dg().LoadTable(refTable)
 }
 
 func (a App) handleNavigateBack() (tea.Model, tea.Cmd) {
