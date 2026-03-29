@@ -316,7 +316,84 @@ func formatValue(v any) string {
 	if v == nil {
 		return "NULL"
 	}
-	return fmt.Sprintf("%v", v)
+	switch val := v.(type) {
+	case string:
+		return val
+	case int16:
+		return fmt.Sprintf("%d", val)
+	case int32:
+		return fmt.Sprintf("%d", val)
+	case int64:
+		return fmt.Sprintf("%d", val)
+	case float32:
+		return fmt.Sprintf("%g", val)
+	case float64:
+		return fmt.Sprintf("%g", val)
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	case []byte:
+		return string(val)
+	case time.Time:
+		return val.Format("2006-01-02 15:04:05")
+	default:
+		str := fmt.Sprintf("%v", val)
+		if isNumericStruct(str) {
+			return formatNumericStruct(val)
+		}
+		return str
+	}
+}
+
+func isNumericStruct(s string) bool {
+	return len(s) > 0 && s[0] == '{' && strings.Contains(s, "finite")
+}
+
+func formatNumericStruct(v any) string {
+	s := fmt.Sprintf("%v", v)
+	s = strings.TrimPrefix(s, "{")
+	s = strings.TrimSuffix(s, "}")
+	parts := strings.Fields(s)
+	if len(parts) < 2 {
+		return s
+	}
+
+	intPart := parts[0]
+	expPart := parts[1]
+
+	var num int64
+	var expVal int
+	if n, _ := fmt.Sscanf(intPart, "%d", &num); n != 1 {
+		return fmt.Sprintf("%v", v)
+	}
+	fmt.Sscanf(expPart, "%d", &expVal)
+
+	if expVal == 0 {
+		return fmt.Sprintf("%d", num)
+	}
+	if expVal < 0 {
+		divisor := int64(1)
+		for i := 0; i < -expVal; i++ {
+			divisor *= 10
+		}
+		whole := num / divisor
+		frac := num % divisor
+		if frac < 0 {
+			frac = -frac
+		}
+		fracStr := fmt.Sprintf("%0*d", -expVal, frac)
+		if num < 0 && whole == 0 {
+			return fmt.Sprintf("-0.%s", fracStr)
+		}
+		return fmt.Sprintf("%d.%s", whole, fracStr)
+	}
+	multiplier := int64(1)
+	for i := 0; i < expVal; i++ {
+		multiplier *= 10
+	}
+	return fmt.Sprintf("%d", num*multiplier)
 }
 
 func quoteIdent(name string) string {
