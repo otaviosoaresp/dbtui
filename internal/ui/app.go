@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/otaviosoaresp/dbtui/internal/config"
 	"github.com/otaviosoaresp/dbtui/internal/db"
 	"github.com/otaviosoaresp/dbtui/internal/schema"
 )
@@ -42,43 +43,109 @@ func (m AppMode) String() string {
 	}
 }
 
+type BufferInfo struct {
+	Name string
+	Grid DataGrid
+}
+
 type App struct {
-	pool           *pgxpool.Pool
-	graph          schema.SchemaGraph
-	tableList      TableList
-	dataGrid       DataGrid
-	fkPreview      FKPreview
-	navStack       NavigationStack
-	help           HelpOverlay
-	filterInput    FilterInput
-	filterList     FilterList
-	focus          focusedPanel
-	mode           AppMode
-	width          int
-	height         int
-	loading        bool
-	err            error
-	statusMsg      string
-	disconnected   bool
-	reconnAttempt  int
+	pool          *pgxpool.Pool
+	graph         schema.SchemaGraph
+	tableList     TableList
+	buffers       []BufferInfo
+	activeBuffer  int
+	fkPreview     FKPreview
+	navStack      NavigationStack
+	help          HelpOverlay
+	filterInput   FilterInput
+	filterList    FilterList
+	commandLine   CommandLine
+	focus         focusedPanel
+	mode          AppMode
+	width         int
+	height        int
+	loading       bool
+	err           error
+	statusMsg     string
+	disconnected  bool
+	reconnAttempt int
+}
+
+func (a *App) dg() *DataGrid {
+	if len(a.buffers) == 0 {
+		return nil
+	}
+	return &a.buffers[a.activeBuffer].Grid
+}
+
+func (a *App) updateDG(msg tea.Msg) tea.Cmd {
+	if len(a.buffers) == 0 {
+		return nil
+	}
+	var cmd tea.Cmd
+	a.buffers[a.activeBuffer].Grid, cmd = a.buffers[a.activeBuffer].Grid.Update(msg)
+	return cmd
 }
 
 func NewApp(pool *pgxpool.Pool) App {
 	tl := NewTableList()
 	tl.Focus()
-	dg := NewDataGrid(pool)
 	fp := NewFKPreview(pool)
 
 	return App{
 		pool:        pool,
 		tableList:   tl,
-		dataGrid:    dg,
 		fkPreview:   fp,
 		filterInput: NewFilterInput(),
+		commandLine: NewCommandLine(),
 		focus:       panelTableList,
 		loading:     true,
 		statusMsg:   "Loading schema...",
 	}
+}
+
+func (a *App) ensureBuffer(name string) int {
+	for i, b := range a.buffers {
+		if b.Name == name {
+			return i
+		}
+	}
+	dg := NewDataGrid(a.pool)
+	dg.SetGraph(&a.graph)
+	gw, gh := a.gridDimensions()
+	dg.SetSize(gw, gh)
+	a.buffers = append(a.buffers, BufferInfo{Name: name, Grid: dg})
+	return len(a.buffers) - 1
+}
+
+func (a *App) addQueryBuffer(name string) int {
+	dg := NewDataGrid(a.pool)
+	dg.SetGraph(&a.graph)
+	gw, gh := a.gridDimensions()
+	dg.SetSize(gw, gh)
+	a.buffers = append(a.buffers, BufferInfo{Name: name, Grid: dg})
+	return len(a.buffers) - 1
+}
+
+func (a *App) closeActiveBuffer() {
+	if len(a.buffers) <= 1 {
+		return
+	}
+	a.buffers = append(a.buffers[:a.activeBuffer], a.buffers[a.activeBuffer+1:]...)
+	if a.activeBuffer >= len(a.buffers) {
+		a.activeBuffer = len(a.buffers) - 1
+	}
+}
+
+func (a App) gridDimensions() (int, int) {
+	tableListWidth := a.calculateTableListWidth()
+	previewH := a.fkPreview.Height()
+	mainHeight := a.height - 3 - previewH
+	gridWidth := a.width - tableListWidth
+	if tableListWidth == 0 {
+		gridWidth = a.width
+	}
+	return gridWidth, mainHeight
 }
 
 func (a App) Init() tea.Cmd {
@@ -101,19 +168,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		if a.filterList.Visible() {
-			var removed string
-			a.filterList, removed = a.filterList.Update(msg)
-			if removed == "ALL" {
-				a.dataGrid.ClearFilters()
-				a.statusMsg = "Filters cleared"
-				return a, a.dataGrid.Reload()
-			} else if removed != "" {
-				a.dataGrid.RemoveFilter(removed)
-				a.filterList.SetFilters(a.dataGrid.Filters())
-				a.statusMsg = fmt.Sprintf("Removed filter: %s", removed)
-				return a, a.dataGrid.Reload()
-			}
-			return a, nil
+			return a.handleFilterListKey(msg)
 		}
 		return a.handleKeyPress(msg)
 
@@ -133,16 +188,17 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleSchemaRefreshed(msg)
 
 	case TableDataLoadedMsg:
-		var cmd tea.Cmd
-		a.dataGrid, cmd = a.dataGrid.Update(msg)
+		cmd := a.updateDG(msg)
 		if msg.Err != nil && isConnectionError(msg.Err) {
-			reconnCmd := a.startReconnect()
-			return a, tea.Batch(cmd, reconnCmd)
+			return a, tea.Batch(cmd, a.startReconnect())
 		}
-		if msg.Err == nil {
-			a.statusMsg = fmt.Sprintf("%s [%d rows]", a.dataGrid.TableName(), msg.Total)
+		if msg.Err == nil && a.dg() != nil {
+			a.statusMsg = fmt.Sprintf("%s [%d rows]", a.dg().TableName(), msg.Total)
 		}
 		return a, cmd
+
+	case RawQueryResultMsg:
+		return a.handleRawQueryResult(msg)
 
 	case FKPreviewDebounceMsg:
 		var cmd tea.Cmd
@@ -152,9 +208,28 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FKPreviewLoadedMsg:
 		a.fkPreview = a.fkPreview.HandleLoaded(msg)
 		return a, nil
+
+	case CommandSubmitMsg:
+		return a.handleCommandSubmit(msg)
 	}
 
 	return a.routeToFocused(msg)
+}
+
+func (a App) handleFilterListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var removed string
+	a.filterList, removed = a.filterList.Update(msg)
+	if removed == "ALL" {
+		a.dg().ClearFilters()
+		a.statusMsg = "Filters cleared"
+		return a, a.dg().Reload()
+	} else if removed != "" {
+		a.dg().RemoveFilter(removed)
+		a.filterList.SetFilters(a.dg().Filters())
+		a.statusMsg = fmt.Sprintf("Removed filter: %s", removed)
+		return a, a.dg().Reload()
+	}
+	return a, nil
 }
 
 func (a App) routeToFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -169,14 +244,12 @@ func (a App) routeToFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 	}
 
-	if a.focus == panelDataGrid {
-		prevRow := a.dataGrid.CursorRow()
-		prevCol := a.dataGrid.CursorColumnName()
-		var cmd tea.Cmd
-		a.dataGrid, cmd = a.dataGrid.Update(msg)
-
-		newCol := a.dataGrid.CursorColumnName()
-		newRow := a.dataGrid.CursorRow()
+	if a.focus == panelDataGrid && a.dg() != nil {
+		prevRow := a.dg().CursorRow()
+		prevCol := a.dg().CursorColumnName()
+		cmd := a.updateDG(msg)
+		newCol := a.dg().CursorColumnName()
+		newRow := a.dg().CursorRow()
 		if newCol != prevCol || newRow != prevRow {
 			return a, a.triggerFKPreview(cmd)
 		}
@@ -187,9 +260,12 @@ func (a App) routeToFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) triggerFKPreview(existingCmd tea.Cmd) tea.Cmd {
-	tableName := a.dataGrid.TableName()
-	colName := a.dataGrid.CursorColumnName()
-	cellValue := a.dataGrid.CursorCellValue()
+	if a.dg() == nil {
+		return existingCmd
+	}
+	tableName := a.dg().TableName()
+	colName := a.dg().CursorColumnName()
+	cellValue := a.dg().CursorCellValue()
 
 	var previewCmd tea.Cmd
 	a.fkPreview, previewCmd = a.fkPreview.TriggerPreview(tableName, colName, cellValue)
@@ -209,9 +285,8 @@ func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, tea.Quit
 	}
 
-	if a.dataGrid.IsExpanding() {
-		var cmd tea.Cmd
-		a.dataGrid, cmd = a.dataGrid.Update(msg)
+	if a.dg() != nil && a.dg().IsExpanding() {
+		cmd := a.updateDG(msg)
 		return a, cmd
 	}
 
@@ -229,7 +304,7 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 	case "tab":
-		if a.focus == panelTableList && a.dataGrid.TableName() != "" {
+		if a.focus == panelTableList && a.dg() != nil && a.dg().TableName() != "" {
 			a.switchFocus(panelDataGrid)
 		} else {
 			a.switchFocus(panelTableList)
@@ -255,7 +330,7 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.help.Toggle()
 		return a, nil
 	case "p":
-		if a.focus == panelDataGrid {
+		if a.focus == panelDataGrid && a.dg() != nil {
 			a.fkPreview.Toggle()
 			a.updateLayout()
 			if a.fkPreview.Visible() {
@@ -264,22 +339,22 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 	case "enter":
-		if a.focus == panelDataGrid {
+		if a.focus == panelDataGrid && a.dg() != nil {
 			return a.handleFollowFK()
 		}
-	case "backspace", "u":
+	case "backspace":
 		if a.focus == panelDataGrid && a.navStack.Len() > 0 {
 			return a.handleNavigateBack()
 		}
 	case "f":
-		if a.focus == panelDataGrid && a.dataGrid.TableName() != "" {
-			col := a.dataGrid.CursorColumnName()
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" {
+			col := a.dg().CursorColumnName()
 			if col == "" {
 				return a, nil
 			}
 			a.mode = ModeFilter
 			a.filterInput.Activate(col)
-			for _, fc := range a.dataGrid.Filters() {
+			for _, fc := range a.dg().Filters() {
 				if fc.Column == col {
 					a.filterInput.SetValue(fc.Operator, fc.Value)
 					break
@@ -288,25 +363,40 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 	case "x":
-		if a.focus == panelDataGrid {
-			col := a.dataGrid.CursorColumnName()
-			for _, fc := range a.dataGrid.Filters() {
+		if a.focus == panelDataGrid && a.dg() != nil {
+			col := a.dg().CursorColumnName()
+			for _, fc := range a.dg().Filters() {
 				if fc.Column == col {
-					a.dataGrid.RemoveFilter(col)
+					a.dg().RemoveFilter(col)
 					a.statusMsg = fmt.Sprintf("Filter removed: %s", col)
-					return a, a.dataGrid.Reload()
+					return a, a.dg().Reload()
 				}
 			}
 		}
 	case "F":
-		if a.focus == panelDataGrid && len(a.dataGrid.Filters()) > 0 {
-			a.dataGrid.ClearFilters()
+		if a.focus == panelDataGrid && a.dg() != nil && len(a.dg().Filters()) > 0 {
+			a.dg().ClearFilters()
 			a.statusMsg = "All filters cleared"
-			return a, a.dataGrid.Reload()
+			return a, a.dg().Reload()
 		}
+	case ":":
+		a.mode = ModeCommand
+		a.commandLine.SetWidth(a.width)
+		a.commandLine.Activate()
+		return a, nil
 	case "]":
+		if len(a.buffers) > 1 {
+			a.activeBuffer = (a.activeBuffer + 1) % len(a.buffers)
+			a.statusMsg = fmt.Sprintf("Buffer: %s [%d/%d]", a.buffers[a.activeBuffer].Name, a.activeBuffer+1, len(a.buffers))
+			a.updateLayout()
+		}
 		return a, nil
 	case "[":
+		if len(a.buffers) > 1 {
+			a.activeBuffer = (a.activeBuffer - 1 + len(a.buffers)) % len(a.buffers)
+			a.statusMsg = fmt.Sprintf("Buffer: %s [%d/%d]", a.buffers[a.activeBuffer].Name, a.activeBuffer+1, len(a.buffers))
+			a.updateLayout()
+		}
 		return a, nil
 	}
 
@@ -317,6 +407,7 @@ func (a App) handleModalKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "esc" {
 		a.mode = ModeNormal
 		a.filterInput.Deactivate()
+		a.commandLine.Deactivate()
 		return a, nil
 	}
 
@@ -324,7 +415,7 @@ func (a App) handleModalKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ModeFilter:
 		return a.handleFilterMode(msg)
 	case ModeCommand:
-		return a, nil
+		return a.handleCommandMode(msg)
 	case ModeInsert:
 		return a, nil
 	}
@@ -336,15 +427,18 @@ func (a App) handleFilterMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		value := a.filterInput.Value()
-		if value != "" {
+		if value != "" && a.dg() != nil {
 			col := a.filterInput.Column()
 			fc := ParseFilterInput(col, value)
-			a.dataGrid.AddFilter(fc)
+			a.dg().AddFilter(fc)
 			a.statusMsg = fmt.Sprintf("Filter: %s", fc.String())
 		}
 		a.filterInput.Deactivate()
 		a.mode = ModeNormal
-		return a, a.dataGrid.Reload()
+		if a.dg() != nil {
+			return a, a.dg().Reload()
+		}
+		return a, nil
 	}
 
 	var cmd tea.Cmd
@@ -352,15 +446,109 @@ func (a App) handleFilterMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return a, cmd
 }
 
+func (a App) handleCommandMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	a.commandLine, cmd = a.commandLine.Update(msg)
+	return a, cmd
+}
+
+func (a App) handleCommandSubmit(msg CommandSubmitMsg) (tea.Model, tea.Cmd) {
+	a.mode = ModeNormal
+	command := strings.TrimSpace(msg.Command)
+
+	if strings.HasPrefix(command, "run ") {
+		scriptName := strings.TrimSpace(command[4:])
+		return a.executeScript(scriptName)
+	}
+
+	switch command {
+	case "scripts", "ls":
+		return a.listScripts()
+	case "buffers":
+		return a.listBuffers()
+	case "bd":
+		a.closeActiveBuffer()
+		a.updateLayout()
+		return a, nil
+	case "bn":
+		if len(a.buffers) > 1 {
+			a.activeBuffer = (a.activeBuffer + 1) % len(a.buffers)
+			a.updateLayout()
+		}
+		return a, nil
+	case "bp":
+		if len(a.buffers) > 1 {
+			a.activeBuffer = (a.activeBuffer - 1 + len(a.buffers)) % len(a.buffers)
+			a.updateLayout()
+		}
+		return a, nil
+	}
+
+	return a.executeRawSQL(command)
+}
+
+func (a App) executeRawSQL(sql string) (tea.Model, tea.Cmd) {
+	name := sql
+	if len(name) > 30 {
+		name = name[:30] + "..."
+	}
+
+	idx := a.addQueryBuffer(name)
+	a.activeBuffer = idx
+	a.switchFocus(panelDataGrid)
+	a.statusMsg = "Executing..."
+
+	pool := a.pool
+	return a, func() tea.Msg {
+		result, err := db.ExecuteRawQuery(context.Background(), pool, sql)
+		return RawQueryResultMsg{SQL: sql, Result: result, Err: err}
+	}
+}
+
+func (a App) executeScript(name string) (tea.Model, tea.Cmd) {
+	sql, err := config.LoadScript(name)
+	if err != nil {
+		a.statusMsg = fmt.Sprintf("Error: %v", err)
+		return a, nil
+	}
+	a.statusMsg = fmt.Sprintf("Running script: %s", name)
+	return a.executeRawSQL(sql)
+}
+
+func (a App) listScripts() (tea.Model, tea.Cmd) {
+	scripts, err := config.ListScripts()
+	if err != nil || len(scripts) == 0 {
+		a.statusMsg = "No scripts found in ~/.config/dbtui/scripts/"
+		return a, nil
+	}
+	a.statusMsg = fmt.Sprintf("Scripts: %s", strings.Join(scripts, ", "))
+	return a, nil
+}
+
+func (a App) listBuffers() (tea.Model, tea.Cmd) {
+	var parts []string
+	for i, b := range a.buffers {
+		marker := " "
+		if i == a.activeBuffer {
+			marker = "*"
+		}
+		parts = append(parts, fmt.Sprintf("%s%d:%s", marker, i+1, b.Name))
+	}
+	a.statusMsg = strings.Join(parts, "  ")
+	return a, nil
+}
+
 func (a App) handleFollowFK() (tea.Model, tea.Cmd) {
-	tableName := a.dataGrid.TableName()
-	colName := a.dataGrid.CursorColumnName()
-	cellValue := a.dataGrid.CursorCellValue()
+	if a.dg() == nil {
+		return a, nil
+	}
+	tableName := a.dg().TableName()
+	colName := a.dg().CursorColumnName()
+	cellValue := a.dg().CursorCellValue()
 
 	if cellValue == "NULL" || cellValue == "" {
 		return a, nil
 	}
-
 	if !a.graph.IsFKColumn(tableName, colName) {
 		return a, nil
 	}
@@ -371,17 +559,16 @@ func (a App) handleFollowFK() (tea.Model, tea.Cmd) {
 	}
 
 	fk := fks[0]
-
-	rowValues := a.dataGrid.CursorRowValues()
-	columns := a.dataGrid.Columns()
+	rowValues := a.dg().CursorRowValues()
+	columns := a.dg().Columns()
 	pk := buildPKFromRow(columns, rowValues, &a.graph, tableName)
 
 	a.navStack.Push(NavigationEntry{
 		Table:     tableName,
 		RowPK:     pk,
 		Column:    colName,
-		CursorRow: a.dataGrid.CursorRow(),
-		CursorCol: a.dataGrid.CursorCol(),
+		CursorRow: a.dg().CursorRow(),
+		CursorCol: a.dg().CursorCol(),
 	})
 
 	refTable := qualifiedRefTable(fk)
@@ -394,17 +581,20 @@ func (a App) handleNavigateBack() (tea.Model, tea.Cmd) {
 	if !ok {
 		return a, nil
 	}
-
 	a.statusMsg = fmt.Sprintf("Back to %s", entry.Table)
-	cmd := a.dataGrid.LoadTable(entry.Table)
-	a.dataGrid.RestorePosition(entry.CursorRow, entry.CursorCol)
+	idx := a.ensureBuffer(entry.Table)
+	a.activeBuffer = idx
+	cmd := a.dg().LoadTable(entry.Table)
+	a.dg().RestorePosition(entry.CursorRow, entry.CursorCol)
 	return a, cmd
 }
 
 func (a *App) selectTable(name string) tea.Cmd {
+	idx := a.ensureBuffer(name)
+	a.activeBuffer = idx
 	a.switchFocus(panelDataGrid)
 	a.statusMsg = fmt.Sprintf("Loading %s...", name)
-	return a.dataGrid.LoadTable(name)
+	return a.dg().LoadTable(name)
 }
 
 func (a App) handleSchemaLoaded(msg SchemaLoadedMsg) (tea.Model, tea.Cmd) {
@@ -416,7 +606,6 @@ func (a App) handleSchemaLoaded(msg SchemaLoadedMsg) (tea.Model, tea.Cmd) {
 	}
 
 	a.graph = msg.Graph
-	a.dataGrid.SetGraph(&a.graph)
 	a.fkPreview.SetGraph(&a.graph)
 	names := msg.Graph.TableNames()
 
@@ -436,8 +625,23 @@ func (a App) handleSchemaLoaded(msg SchemaLoadedMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a App) handleSchemaRefreshed(msg SchemaRefreshedMsg) (tea.Model, tea.Cmd) {
-	loaded := SchemaLoadedMsg(msg)
-	return a.handleSchemaLoaded(loaded)
+	return a.handleSchemaLoaded(SchemaLoadedMsg(msg))
+}
+
+func (a App) handleRawQueryResult(msg RawQueryResultMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		a.statusMsg = fmt.Sprintf("Error: %v", msg.Err)
+		if len(a.buffers) > 1 {
+			a.closeActiveBuffer()
+		}
+		return a, nil
+	}
+
+	if a.dg() != nil {
+		a.dg().SetQueryResult(msg.Result.Columns, msg.Result.Rows, msg.Result.Total)
+	}
+	a.statusMsg = fmt.Sprintf("Query result: %d rows", msg.Result.Total)
+	return a, nil
 }
 
 func (a *App) switchFocus(panel focusedPanel) {
@@ -445,10 +649,14 @@ func (a *App) switchFocus(panel focusedPanel) {
 	switch panel {
 	case panelTableList:
 		a.tableList.Focus()
-		a.dataGrid.Blur()
+		if a.dg() != nil {
+			a.dg().Blur()
+		}
 	case panelDataGrid:
 		a.tableList.Blur()
-		a.dataGrid.Focus()
+		if a.dg() != nil {
+			a.dg().Focus()
+		}
 	}
 }
 
@@ -463,8 +671,11 @@ func (a *App) updateLayout() {
 	if tableListWidth == 0 {
 		gridWidth = a.width
 	}
-	a.dataGrid.SetSize(gridWidth, mainHeight)
+	if a.dg() != nil {
+		a.dg().SetSize(gridWidth, mainHeight)
+	}
 	a.fkPreview.SetWidth(a.width)
+	a.commandLine.SetWidth(a.width)
 }
 
 func (a App) calculateTableListWidth() int {
@@ -484,17 +695,12 @@ func (a App) View() string {
 	}
 
 	if a.width < 40 {
-		return lipgloss.Place(
-			a.width, a.height,
-			lipgloss.Center, lipgloss.Center,
-			"Terminal too small\n(min 40 columns)",
-		)
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, "Terminal too small\n(min 40 columns)")
 	}
 
 	if a.help.Visible() {
 		return a.help.View()
 	}
-
 	if a.filterList.Visible() {
 		return a.filterList.View()
 	}
@@ -502,148 +708,125 @@ func (a App) View() string {
 	var sections []string
 
 	if a.disconnected {
-		bannerStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("1")).
-			Foreground(lipgloss.Color("15")).
-			Bold(true).
-			Width(a.width)
-		banner := bannerStyle.Render(fmt.Sprintf(" Connection lost. Reconnecting... (attempt %d)", a.reconnAttempt))
+		banner := lipgloss.NewStyle().Background(lipgloss.Color("1")).Foreground(lipgloss.Color("15")).Bold(true).Width(a.width).
+			Render(fmt.Sprintf(" Connection lost. Reconnecting... (attempt %d)", a.reconnAttempt))
 		sections = append(sections, banner)
 	}
 
-	breadcrumb := RenderBreadcrumb(
-		&a.navStack,
-		a.dataGrid.TableName(),
-		a.dataGrid.CursorRow(),
-		a.dataGrid.Total(),
-		a.width,
-	)
+	tableName := ""
+	cursorRow := 0
+	total := 0
+	if a.dg() != nil {
+		tableName = a.dg().TableName()
+		cursorRow = a.dg().CursorRow()
+		total = a.dg().Total()
+	}
 
-	if len(a.dataGrid.Filters()) > 0 {
+	breadcrumb := RenderBreadcrumb(&a.navStack, tableName, cursorRow, total, a.width)
+
+	if len(a.buffers) > 1 {
+		bufStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+		breadcrumb += " " + bufStyle.Render(fmt.Sprintf("[%d/%d]", a.activeBuffer+1, len(a.buffers)))
+	}
+
+	if a.dg() != nil && len(a.dg().Filters()) > 0 {
 		filterStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-		var filterParts []string
-		for _, f := range a.dataGrid.Filters() {
-			filterParts = append(filterParts, f.String())
+		var parts []string
+		for _, f := range a.dg().Filters() {
+			parts = append(parts, f.String())
 		}
-		breadcrumb += " " + filterStyle.Render("[F: "+strings.Join(filterParts, ", ")+"]")
+		breadcrumb += " " + filterStyle.Render("[F: "+strings.Join(parts, ", ")+"]")
 	}
 
 	sections = append(sections, breadcrumb)
-
-	mainContent := a.renderMainContent()
-	sections = append(sections, mainContent)
+	sections = append(sections, a.renderMainContent())
 
 	if a.mode == ModeFilter && a.filterInput.Active() {
 		sections = append(sections, a.filterInput.View(a.width))
 	}
-
+	if a.mode == ModeCommand && a.commandLine.Active() {
+		sections = append(sections, a.commandLine.View())
+	}
 	if a.fkPreview.Visible() {
 		sections = append(sections, a.fkPreview.View())
 	}
 
-	statusBar := a.renderStatusBar()
-	sections = append(sections, statusBar)
-
+	sections = append(sections, a.renderStatusBar())
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
 func (a App) renderStatusBar() string {
-	bgStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Width(a.width)
-
-	keyStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("6")).
-		Bold(true)
-
-	descStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("250"))
-
-	modeStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("3")).
-		Bold(true)
+	bgStyle := lipgloss.NewStyle().Background(lipgloss.Color("236")).Width(a.width)
+	keyStyle := lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("6")).Bold(true)
+	descStyle := lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("250"))
+	modeStyle := lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("3")).Bold(true)
 
 	var hints []string
 
 	if a.mode != ModeNormal {
-		modeLabel := modeStyle.Render(" -- " + a.mode.String() + " -- ")
-		hints = append(hints, modeLabel)
+		hints = append(hints, modeStyle.Render(" -- "+a.mode.String()+" -- "))
 		hints = append(hints, keyStyle.Render("[Esc]")+descStyle.Render(" Normal"))
 	} else if a.tableList.filtering {
-		hints = append(hints,
-			keyStyle.Render("[Enter]")+descStyle.Render(" Select"),
-			keyStyle.Render("[Esc]")+descStyle.Render(" Cancel"),
-		)
+		hints = append(hints, keyStyle.Render("[Enter]")+descStyle.Render(" Select"), keyStyle.Render("[Esc]")+descStyle.Render(" Cancel"))
 	} else if a.focus == panelTableList {
 		hints = append(hints,
 			keyStyle.Render("[/]")+descStyle.Render(" Search"),
 			keyStyle.Render("[Enter]")+descStyle.Render(" Open"),
+			keyStyle.Render("[:]")+descStyle.Render(" Cmd"),
 			keyStyle.Render("[Tab]")+descStyle.Render(" Grid"),
-			keyStyle.Render("[R]")+descStyle.Render(" Refresh"),
 			keyStyle.Render("[q]")+descStyle.Render(" Quit"),
 		)
 	} else {
 		isFKCol := false
-		if a.dataGrid.TableName() != "" {
-			col := a.dataGrid.CursorColumnName()
-			isFKCol = a.graph.IsFKColumn(a.dataGrid.TableName(), col)
+		if a.dg() != nil && a.dg().TableName() != "" {
+			col := a.dg().CursorColumnName()
+			isFKCol = a.graph.IsFKColumn(a.dg().TableName(), col)
 		}
 
-		hints = append(hints,
-			keyStyle.Render("[h/l]")+descStyle.Render(" Cols"),
-			keyStyle.Render("[j/k]")+descStyle.Render(" Rows"),
-			keyStyle.Render("[d/u]")+descStyle.Render(" Page"),
-		)
+		hints = append(hints, keyStyle.Render("[h/l]")+descStyle.Render(" Cols"), keyStyle.Render("[j/k]")+descStyle.Render(" Rows"), keyStyle.Render("[d/u]")+descStyle.Render(" Page"))
 
 		if isFKCol {
 			hints = append(hints, keyStyle.Render("[Enter]")+descStyle.Render(" FK"))
 		}
-
 		if a.navStack.Len() > 0 {
-			hints = append(hints, keyStyle.Render("[u]")+descStyle.Render(" Back"))
-		}
-
-		hasFilterOnCol := false
-		for _, fc := range a.dataGrid.Filters() {
-			if fc.Column == a.dataGrid.CursorColumnName() {
-				hasFilterOnCol = true
-				break
-			}
+			hints = append(hints, keyStyle.Render("[Bksp]")+descStyle.Render(" Back"))
 		}
 
 		hints = append(hints, keyStyle.Render("[f]")+descStyle.Render(" Filter"))
+
+		hasFilterOnCol := false
+		if a.dg() != nil {
+			for _, fc := range a.dg().Filters() {
+				if fc.Column == a.dg().CursorColumnName() {
+					hasFilterOnCol = true
+					break
+				}
+			}
+		}
 		if hasFilterOnCol {
-			hints = append(hints, keyStyle.Render("[x]")+descStyle.Render(" Remove"))
+			hints = append(hints, keyStyle.Render("[x]")+descStyle.Render(" Rm"))
 		}
-		if len(a.dataGrid.Filters()) > 0 {
-			hints = append(hints, keyStyle.Render("[F]")+descStyle.Render(" Clear all"))
+
+		hints = append(hints, keyStyle.Render("[:]")+descStyle.Render(" Cmd"))
+
+		if len(a.buffers) > 1 {
+			hints = append(hints, keyStyle.Render("[]/[]")+descStyle.Render(" Buf"))
 		}
-		hints = append(hints,
-			keyStyle.Render("[:]")+descStyle.Render(" Cmd"),
-			keyStyle.Render("[p]")+descStyle.Render(" Preview"),
-			keyStyle.Render("[q]")+descStyle.Render(" Quit"),
-		)
+
+		hints = append(hints, keyStyle.Render("[q]")+descStyle.Render(" Quit"))
 	}
 
 	left := " " + strings.Join(hints, "  ")
-
 	right := ""
 	if a.statusMsg != "" {
 		right = descStyle.Render(a.statusMsg + " ")
 	}
 
-	leftLen := lipgloss.Width(left)
-	rightLen := lipgloss.Width(right)
-	padding := a.width - leftLen - rightLen
+	padding := a.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if padding < 0 {
 		padding = 0
 	}
-
-	bar := left + strings.Repeat(" ", padding) + right
-	return bgStyle.Render(bar)
+	return bgStyle.Render(left + strings.Repeat(" ", padding) + right)
 }
 
 func (a App) renderMainContent() string {
@@ -652,74 +835,64 @@ func (a App) renderMainContent() string {
 	if a.loading {
 		return a.renderLoadingState()
 	}
-
 	if a.err != nil {
 		return a.renderErrorState()
 	}
 
-	gridView := a.dataGrid.View()
+	var gridView string
+	if a.dg() != nil {
+		gridView = a.dg().View()
+	} else {
+		gridView = a.renderEmptyGrid()
+	}
 
 	if tableListWidth == 0 {
 		return gridView
 	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, a.tableList.View(), gridView)
+}
 
-	tableListView := a.tableList.View()
-	return lipgloss.JoinHorizontal(lipgloss.Top, tableListView, gridView)
+func (a App) renderEmptyGrid() string {
+	gw, gh := a.gridDimensions()
+	content := lipgloss.Place(gw-4, gh-2, lipgloss.Center, lipgloss.Center,
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("Select a table or run a query (:)"))
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Width(gw-2).Height(gh-2).Render(content)
 }
 
 func (a App) renderLoadingState() string {
 	tableListWidth := a.calculateTableListWidth()
-	mainHeight := a.height - 3 - a.fkPreview.Height()
+	_, mainHeight := a.gridDimensions()
+	gridWidth := a.width - tableListWidth
+	if tableListWidth == 0 {
+		gridWidth = a.width
+	}
 
-	spinnerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	loadingContent := lipgloss.Place(
-		a.width-tableListWidth-2, mainHeight-2,
-		lipgloss.Center, lipgloss.Center,
-		spinnerStyle.Render("Loading schema..."),
-	)
-
-	gridStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Width(a.width - tableListWidth - 2).
-		Height(mainHeight - 2)
-
-	gridView := gridStyle.Render(loadingContent)
+	content := lipgloss.Place(gridWidth-2, mainHeight-2, lipgloss.Center, lipgloss.Center,
+		lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render("Loading schema..."))
+	gridView := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Width(gridWidth-2).Height(mainHeight-2).Render(content)
 
 	if tableListWidth > 0 {
-		tableListView := a.tableList.View()
-		return lipgloss.JoinHorizontal(lipgloss.Top, tableListView, gridView)
+		return lipgloss.JoinHorizontal(lipgloss.Top, a.tableList.View(), gridView)
 	}
 	return gridView
 }
 
 func (a App) renderErrorState() string {
 	mainHeight := a.height - 3
-	errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	content := lipgloss.Place(
-		a.width-2, mainHeight-2,
-		lipgloss.Center, lipgloss.Center,
-		errStyle.Render(fmt.Sprintf("Error: %v", a.err)),
-	)
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("1")).
-		Width(a.width - 2).
-		Height(mainHeight - 2).
-		Render(content)
+	content := lipgloss.Place(a.width-2, mainHeight-2, lipgloss.Center, lipgloss.Center,
+		lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true).Render(fmt.Sprintf("Error: %v", a.err)))
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("1")).Width(a.width-2).Height(mainHeight-2).Render(content)
 }
 
 func (a App) handleReconnectTick(msg ReconnectTickMsg) (tea.Model, tea.Cmd) {
 	a.reconnAttempt = msg.Attempt
 	a.statusMsg = fmt.Sprintf("Reconnecting... (attempt %d)", msg.Attempt)
-
 	pool := a.pool
 	attempt := msg.Attempt
 	nextInterval := msg.Interval * 2
 	if nextInterval > 30*time.Second {
 		nextInterval = 30 * time.Second
 	}
-
 	return a, func() tea.Msg {
 		err := db.Ping(context.Background(), pool)
 		if err == nil {
@@ -734,9 +907,7 @@ func (a *App) startReconnect() tea.Cmd {
 	a.disconnected = true
 	a.reconnAttempt = 1
 	a.statusMsg = "Connection lost. Reconnecting..."
-	return func() tea.Msg {
-		return ReconnectTickMsg{Attempt: 1, Interval: 1 * time.Second}
-	}
+	return func() tea.Msg { return ReconnectTickMsg{Attempt: 1, Interval: 1 * time.Second} }
 }
 
 func (a App) loadSchemaCmd() tea.Cmd {
@@ -758,11 +929,8 @@ func isConnectionError(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "connection") ||
-		strings.Contains(msg, "refused") ||
-		strings.Contains(msg, "broken pipe") ||
-		strings.Contains(msg, "reset by peer") ||
-		strings.Contains(msg, "closed pool")
+	return strings.Contains(msg, "connection") || strings.Contains(msg, "refused") ||
+		strings.Contains(msg, "broken pipe") || strings.Contains(msg, "reset by peer") || strings.Contains(msg, "closed pool")
 }
 
 func buildPKFromRow(columns []string, values []string, graph *schema.SchemaGraph, tableName string) PKValue {
@@ -770,7 +938,6 @@ func buildPKFromRow(columns []string, values []string, graph *schema.SchemaGraph
 	if !ok {
 		return nil
 	}
-
 	var pk PKValue
 	for _, col := range tbl.Columns {
 		if !col.IsPK {

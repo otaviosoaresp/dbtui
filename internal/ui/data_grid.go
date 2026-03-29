@@ -103,6 +103,14 @@ func (dg *DataGrid) Reload() tea.Cmd {
 	return dg.loadPageCmd()
 }
 
+func (dg *DataGrid) SetQueryResult(columns []string, rows [][]string, total int) {
+	dg.loading = false
+	dg.err = nil
+	dg.total = total
+	dg.tableName = "query"
+	dg.table.SetData(columns, rows)
+}
+
 func (dg *DataGrid) CursorColumnName() string {
 	return dg.table.CursorColumnName()
 }

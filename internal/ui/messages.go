@@ -3,6 +3,7 @@ package ui
 import (
 	"time"
 
+	"github.com/otaviosoaresp/dbtui/internal/db"
 	"github.com/otaviosoaresp/dbtui/internal/schema"
 )
 
@@ -51,4 +52,14 @@ type ReconnectTickMsg struct {
 type QueryErrorMsg struct {
 	Context string
 	Err     error
+}
+
+type RawQueryResultMsg struct {
+	SQL    string
+	Result db.QueryResult
+	Err    error
+}
+
+type CommandSubmitMsg struct {
+	Command string
 }

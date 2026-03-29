@@ -171,6 +171,68 @@ func QueryFKPreview(ctx context.Context, pool *pgxpool.Pool, refTable string, pk
 	}, rows.Err()
 }
 
+func ExecuteRawQuery(ctx context.Context, pool *pgxpool.Pool, sql string) (QueryResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	trimmed := strings.TrimSpace(sql)
+	upper := strings.ToUpper(trimmed)
+
+	isSelect := strings.HasPrefix(upper, "SELECT") ||
+		strings.HasPrefix(upper, "WITH") ||
+		strings.HasPrefix(upper, "EXPLAIN") ||
+		strings.HasPrefix(upper, "SHOW") ||
+		strings.HasPrefix(upper, "TABLE") ||
+		strings.HasPrefix(upper, "\\D")
+
+	if !isSelect {
+		tag, err := pool.Exec(ctx, trimmed)
+		if err != nil {
+			return QueryResult{}, fmt.Errorf("executing statement: %w", err)
+		}
+		return QueryResult{
+			Columns: []string{"result"},
+			Rows:    [][]string{{tag.String()}},
+			Total:   1,
+		}, nil
+	}
+
+	rows, err := pool.Query(ctx, trimmed)
+	if err != nil {
+		return QueryResult{}, fmt.Errorf("executing query: %w", err)
+	}
+	defer rows.Close()
+
+	fieldDescs := rows.FieldDescriptions()
+	columns := make([]string, len(fieldDescs))
+	for i, fd := range fieldDescs {
+		columns[i] = fd.Name
+	}
+
+	var resultRows [][]string
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			return QueryResult{}, fmt.Errorf("reading row: %w", err)
+		}
+		row := make([]string, len(values))
+		for i, v := range values {
+			row[i] = formatValue(v)
+		}
+		resultRows = append(resultRows, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return QueryResult{}, err
+	}
+
+	return QueryResult{
+		Columns: columns,
+		Rows:    resultRows,
+		Total:   len(resultRows),
+	}, nil
+}
+
 func formatValue(v any) string {
 	if v == nil {
 		return "NULL"
