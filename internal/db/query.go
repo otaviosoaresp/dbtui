@@ -233,6 +233,59 @@ func ExecuteRawQuery(ctx context.Context, pool *pgxpool.Pool, sql string) (Query
 	}, nil
 }
 
+func ExecuteUpdate(ctx context.Context, pool *pgxpool.Pool, table, column, newValue string, pkColumns, pkValues []string) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	conditions := make([]string, len(pkColumns))
+	args := make([]any, 0, len(pkValues)+1)
+
+	isNull := newValue == ""
+	paramIdx := 1
+
+	if !isNull {
+		args = append(args, newValue)
+		paramIdx = 2
+	}
+
+	for i := range pkColumns {
+		conditions[i] = fmt.Sprintf("%s = $%d", quoteIdent(pkColumns[i]), paramIdx)
+		args = append(args, pkValues[i])
+		paramIdx++
+	}
+
+	var setClause string
+	if isNull {
+		setClause = fmt.Sprintf("%s = NULL", quoteIdent(column))
+	} else {
+		setClause = fmt.Sprintf("%s = $1", quoteIdent(column))
+	}
+
+	query := fmt.Sprintf(
+		"UPDATE %s SET %s WHERE %s",
+		quoteIdent(table),
+		setClause,
+		strings.Join(conditions, " AND "),
+	)
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("executing update: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return tag.RowsAffected(), nil
+}
+
 func formatValue(v any) string {
 	if v == nil {
 		return "NULL"

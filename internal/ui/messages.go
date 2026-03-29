@@ -54,6 +54,11 @@ type QueryErrorMsg struct {
 	Err     error
 }
 
+type UpdateResultMsg struct {
+	RowsAffected int64
+	Err          error
+}
+
 type RawQueryResultMsg struct {
 	SQL    string
 	Result db.QueryResult

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -60,6 +61,11 @@ type App struct {
 	filterInput   FilterInput
 	filterList    FilterList
 	commandLine   CommandLine
+	editInput     textinput.Model
+	editColumn    string
+	editOriginal  string
+	editConfirm   bool
+	editSQL       string
 	focus         focusedPanel
 	mode          AppMode
 	width         int
@@ -134,6 +140,10 @@ func (a *App) closeActiveBuffer() {
 	a.buffers = append(a.buffers[:a.activeBuffer], a.buffers[a.activeBuffer+1:]...)
 	if a.activeBuffer >= len(a.buffers) {
 		a.activeBuffer = len(a.buffers) - 1
+	}
+	a.updateLayout()
+	if a.dg() != nil {
+		a.statusMsg = fmt.Sprintf("Buffer: %s", a.buffers[a.activeBuffer].Name)
 	}
 }
 
@@ -211,6 +221,17 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CommandSubmitMsg:
 		return a.handleCommandSubmit(msg)
+
+	case UpdateResultMsg:
+		if msg.Err != nil {
+			a.statusMsg = fmt.Sprintf("Update error: %v", msg.Err)
+		} else {
+			a.statusMsg = fmt.Sprintf("Updated %d row(s)", msg.RowsAffected)
+			if a.dg() != nil {
+				return a, a.dg().Reload()
+			}
+		}
+		return a, nil
 	}
 
 	return a.routeToFocused(msg)
@@ -389,6 +410,36 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.fkPreview.ScrollRight()
 			return a, nil
 		}
+	case "i":
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" && a.dg().TableName() != "query" {
+			col := a.dg().CursorColumnName()
+			if col == "" {
+				return a, nil
+			}
+			if a.graph.Tables[a.dg().TableName()].HasPK == false {
+				a.statusMsg = "Cannot edit: table has no primary key"
+				return a, nil
+			}
+			for _, c := range a.graph.Tables[a.dg().TableName()].Columns {
+				if c.Name == col && c.IsPK {
+					a.statusMsg = "Cannot edit primary key column"
+					return a, nil
+				}
+			}
+			a.mode = ModeInsert
+			a.editColumn = col
+			a.editOriginal = a.dg().CursorCellValue()
+			a.editConfirm = false
+			ti := textinput.New()
+			ti.CharLimit = 1000
+			ti.Width = a.width - 20
+			if a.editOriginal != "NULL" {
+				ti.SetValue(a.editOriginal)
+			}
+			ti.Focus()
+			a.editInput = ti
+			return a, nil
+		}
 	case ":":
 		a.mode = ModeCommand
 		a.commandLine.SetWidth(a.width)
@@ -427,7 +478,7 @@ func (a App) handleModalKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ModeCommand:
 		return a.handleCommandMode(msg)
 	case ModeInsert:
-		return a, nil
+		return a.handleInsertMode(msg)
 	}
 
 	return a, nil
@@ -460,6 +511,84 @@ func (a App) handleCommandMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	a.commandLine, cmd = a.commandLine.Update(msg)
 	return a, cmd
+}
+
+func (a App) handleInsertMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if a.editConfirm {
+		switch msg.String() {
+		case "y", "Y":
+			return a.executeEdit()
+		case "n", "N", "esc":
+			a.mode = ModeNormal
+			a.editConfirm = false
+			a.statusMsg = "Edit cancelled"
+			return a, nil
+		}
+		return a, nil
+	}
+
+	switch msg.String() {
+	case "enter":
+		newValue := a.editInput.Value()
+		tableName := a.dg().TableName()
+		col := a.editColumn
+
+		var setExpr string
+		if newValue == "" {
+			setExpr = fmt.Sprintf("%s = NULL", col)
+		} else {
+			setExpr = fmt.Sprintf("%s = '%s'", col, newValue)
+		}
+
+		rowValues := a.dg().CursorRowValues()
+		columns := a.dg().Columns()
+		pk := buildPKFromRow(columns, rowValues, &a.graph, tableName)
+
+		var whereParts []string
+		for _, p := range pk {
+			whereParts = append(whereParts, fmt.Sprintf("%s = '%s'", p.Column, p.Value))
+		}
+
+		a.editSQL = fmt.Sprintf("UPDATE \"%s\" SET %s WHERE %s", tableName, setExpr, strings.Join(whereParts, " AND "))
+		a.editConfirm = true
+		return a, nil
+	}
+
+	var cmd tea.Cmd
+	a.editInput, cmd = a.editInput.Update(msg)
+	return a, cmd
+}
+
+func (a App) executeEdit() (tea.Model, tea.Cmd) {
+	if a.dg() == nil {
+		a.mode = ModeNormal
+		return a, nil
+	}
+
+	tableName := a.dg().TableName()
+	col := a.editColumn
+	newValue := a.editInput.Value()
+
+	rowValues := a.dg().CursorRowValues()
+	columns := a.dg().Columns()
+	pk := buildPKFromRow(columns, rowValues, &a.graph, tableName)
+
+	pkCols := make([]string, len(pk))
+	pkVals := make([]string, len(pk))
+	for i, p := range pk {
+		pkCols[i] = p.Column
+		pkVals[i] = p.Value
+	}
+
+	a.mode = ModeNormal
+	a.editConfirm = false
+	a.statusMsg = "Updating..."
+
+	pool := a.pool
+	return a, func() tea.Msg {
+		rows, err := db.ExecuteUpdate(context.Background(), pool, tableName, col, newValue, pkCols, pkVals)
+		return UpdateResultMsg{RowsAffected: rows, Err: err}
+	}
 }
 
 func (a App) handleCommandSubmit(msg CommandSubmitMsg) (tea.Model, tea.Cmd) {
@@ -761,6 +890,9 @@ func (a App) View() string {
 	if a.mode == ModeCommand && a.commandLine.Active() {
 		sections = append(sections, a.commandLine.View())
 	}
+	if a.mode == ModeInsert {
+		sections = append(sections, a.renderEditInput())
+	}
 	if a.fkPreview.Visible() {
 		sections = append(sections, a.fkPreview.View())
 	}
@@ -876,6 +1008,18 @@ func (a App) renderBufferLine() string {
 	line := strings.Join(tabs, " ")
 	bgStyle := lipgloss.NewStyle().Background(lipgloss.Color("236")).Width(a.width)
 	return bgStyle.Render(line)
+}
+
+func (a App) renderEditInput() string {
+	if a.editConfirm {
+		confirmStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+		sqlStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+		hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+		return confirmStyle.Render(" Execute? ") + sqlStyle.Render(a.editSQL) + " " + hintStyle.Render("[y/n]")
+	}
+
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	return labelStyle.Render(fmt.Sprintf(" Edit %s: ", a.editColumn)) + a.editInput.View()
 }
 
 func (a App) renderMainContent() string {
