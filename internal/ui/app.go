@@ -61,6 +61,7 @@ type App struct {
 	filterInput   FilterInput
 	filterList    FilterList
 	commandLine   CommandLine
+	recordView    RecordView
 	editInput     textinput.Model
 	editColumn    string
 	editOriginal  string
@@ -171,6 +172,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyMsg:
+		if a.recordView.Visible() {
+			if msg.String() == "esc" || msg.String() == "v" || msg.String() == "q" {
+				a.recordView.Hide()
+			} else {
+				a.recordView = a.recordView.Update(msg)
+			}
+			return a, nil
+		}
 		if a.help.Visible() {
 			if msg.String() == "?" || msg.String() == "esc" || msg.String() == "q" {
 				a.help.Hide()
@@ -409,6 +418,16 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.fkPreview.Visible() {
 			a.fkPreview.ScrollRight()
 			return a, nil
+		}
+	case "v":
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" {
+			columns := a.dg().Columns()
+			values := a.dg().CursorRowValues()
+			if len(columns) > 0 && len(values) > 0 {
+				a.recordView.SetSize(a.width, a.height)
+				a.recordView.Show(a.dg().TableName(), a.dg().CursorRow(), columns, values)
+				return a, nil
+			}
 		}
 	case "i":
 		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" && a.dg().TableName() != "query" {
@@ -837,6 +856,9 @@ func (a App) View() string {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, "Terminal too small\n(min 40 columns)")
 	}
 
+	if a.recordView.Visible() {
+		return a.recordView.View()
+	}
 	if a.help.Visible() {
 		return a.help.View()
 	}
