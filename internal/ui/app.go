@@ -50,6 +50,8 @@ type App struct {
 	fkPreview      FKPreview
 	navStack       NavigationStack
 	help           HelpOverlay
+	filterInput    FilterInput
+	filterList     FilterList
 	focus          focusedPanel
 	mode           AppMode
 	width          int
@@ -68,13 +70,14 @@ func NewApp(pool *pgxpool.Pool) App {
 	fp := NewFKPreview(pool)
 
 	return App{
-		pool:      pool,
-		tableList: tl,
-		dataGrid:  dg,
-		fkPreview: fp,
-		focus:     panelTableList,
-		loading:   true,
-		statusMsg: "Loading schema...",
+		pool:        pool,
+		tableList:   tl,
+		dataGrid:    dg,
+		fkPreview:   fp,
+		filterInput: NewFilterInput(),
+		focus:       panelTableList,
+		loading:     true,
+		statusMsg:   "Loading schema...",
 	}
 }
 
@@ -94,6 +97,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.help.Visible() {
 			if msg.String() == "?" || msg.String() == "esc" || msg.String() == "q" {
 				a.help.Hide()
+			}
+			return a, nil
+		}
+		if a.filterList.Visible() {
+			var removed string
+			a.filterList, removed = a.filterList.Update(msg)
+			if removed == "ALL" {
+				a.dataGrid.ClearFilters()
+				a.statusMsg = "Filters cleared"
+				return a, a.dataGrid.Reload()
+			} else if removed != "" {
+				a.dataGrid.RemoveFilter(removed)
+				a.filterList.SetFilters(a.dataGrid.Filters())
+				a.statusMsg = fmt.Sprintf("Removed filter: %s", removed)
+				return a, a.dataGrid.Reload()
 			}
 			return a, nil
 		}
@@ -253,6 +271,22 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.focus == panelDataGrid && a.navStack.Len() > 0 {
 			return a.handleNavigateBack()
 		}
+	case "f":
+		if a.focus == panelDataGrid && a.dataGrid.TableName() != "" {
+			col := a.dataGrid.CursorColumnName()
+			if col != "" {
+				a.mode = ModeFilter
+				a.filterInput.Activate(col)
+				return a, nil
+			}
+		}
+	case "F":
+		if a.focus == panelDataGrid && len(a.dataGrid.Filters()) > 0 {
+			a.filterList.SetFilters(a.dataGrid.Filters())
+			a.filterList.SetSize(a.width, a.height)
+			a.filterList.Toggle()
+			return a, nil
+		}
 	case "]":
 		return a, nil
 	case "[":
@@ -265,12 +299,13 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (a App) handleModalKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "esc" {
 		a.mode = ModeNormal
+		a.filterInput.Deactivate()
 		return a, nil
 	}
 
 	switch a.mode {
 	case ModeFilter:
-		return a, nil
+		return a.handleFilterMode(msg)
 	case ModeCommand:
 		return a, nil
 	case ModeInsert:
@@ -278,6 +313,26 @@ func (a App) handleModalKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return a, nil
+}
+
+func (a App) handleFilterMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		value := a.filterInput.Value()
+		if value != "" {
+			col := a.filterInput.Column()
+			fc := ParseFilterInput(col, value)
+			a.dataGrid.AddFilter(fc)
+			a.statusMsg = fmt.Sprintf("Filter: %s", fc.String())
+		}
+		a.filterInput.Deactivate()
+		a.mode = ModeNormal
+		return a, a.dataGrid.Reload()
+	}
+
+	var cmd tea.Cmd
+	a.filterInput, cmd = a.filterInput.Update(msg)
+	return a, cmd
 }
 
 func (a App) handleFollowFK() (tea.Model, tea.Cmd) {
@@ -423,6 +478,10 @@ func (a App) View() string {
 		return a.help.View()
 	}
 
+	if a.filterList.Visible() {
+		return a.filterList.View()
+	}
+
 	var sections []string
 
 	if a.disconnected {
@@ -442,10 +501,24 @@ func (a App) View() string {
 		a.dataGrid.Total(),
 		a.width,
 	)
+
+	if len(a.dataGrid.Filters()) > 0 {
+		filterStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+		var filterParts []string
+		for _, f := range a.dataGrid.Filters() {
+			filterParts = append(filterParts, f.String())
+		}
+		breadcrumb += " " + filterStyle.Render("[F: "+strings.Join(filterParts, ", ")+"]")
+	}
+
 	sections = append(sections, breadcrumb)
 
 	mainContent := a.renderMainContent()
 	sections = append(sections, mainContent)
+
+	if a.mode == ModeFilter && a.filterInput.Active() {
+		sections = append(sections, a.filterInput.View(a.width))
+	}
 
 	if a.fkPreview.Visible() {
 		sections = append(sections, a.fkPreview.View())

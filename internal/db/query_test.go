@@ -37,7 +37,7 @@ func TestQueryTableData_HappyPath(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	result, err := QueryTableData(ctx, pool, "customers", 0, 10)
+	result, err := QueryTableData(ctx, pool, "customers", 0, 10, nil)
 	if err != nil {
 		t.Fatalf("QueryTableData failed: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestQueryTableData_Pagination(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	page1, err := QueryTableData(ctx, pool, "customers", 0, 2)
+	page1, err := QueryTableData(ctx, pool, "customers", 0, 2, nil)
 	if err != nil {
 		t.Fatalf("page 1 failed: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestQueryTableData_Pagination(t *testing.T) {
 		t.Errorf("expected 2 rows in page 1, got %d", len(page1.Rows))
 	}
 
-	page2, err := QueryTableData(ctx, pool, "customers", 2, 2)
+	page2, err := QueryTableData(ctx, pool, "customers", 2, 2, nil)
 	if err != nil {
 		t.Fatalf("page 2 failed: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestQueryTableData_EmptyTable(t *testing.T) {
 		pool.Exec(context.Background(), "DROP TABLE IF EXISTS empty_test")
 	})
 
-	result, err := QueryTableData(ctx, pool, "empty_test", 0, 10)
+	result, err := QueryTableData(ctx, pool, "empty_test", 0, 10, nil)
 	if err != nil {
 		t.Fatalf("QueryTableData failed: %v", err)
 	}

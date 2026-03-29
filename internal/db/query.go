@@ -15,18 +15,55 @@ type QueryResult struct {
 	Total   int
 }
 
-func QueryTableData(ctx context.Context, pool *pgxpool.Pool, table string, offset, limit int) (QueryResult, error) {
+type FilterClause struct {
+	Column   string
+	Operator string
+	Value    string
+}
+
+func (fc FilterClause) String() string {
+	switch fc.Operator {
+	case "IS NULL":
+		return fc.Column + " IS NULL"
+	case "IS NOT NULL":
+		return fc.Column + " IS NOT NULL"
+	default:
+		return fc.Column + fc.Operator + fc.Value
+	}
+}
+
+func (fc FilterClause) SQLCondition(paramIdx int) (string, any) {
+	quoted := fmt.Sprintf(`"%s"`, fc.Column)
+	switch fc.Operator {
+	case "IS NULL":
+		return quoted + " IS NULL", nil
+	case "IS NOT NULL":
+		return quoted + " IS NOT NULL", nil
+	case "LIKE":
+		return fmt.Sprintf("%s LIKE $%d", quoted, paramIdx), fc.Value
+	default:
+		return fmt.Sprintf("%s %s $%d", quoted, fc.Operator, paramIdx), fc.Value
+	}
+}
+
+func QueryTableData(ctx context.Context, pool *pgxpool.Pool, table string, offset, limit int, filters []FilterClause) (QueryResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdent(table))
+	whereClause, whereArgs := buildWhereClause(filters)
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s%s", quoteIdent(table), whereClause)
 	var total int
-	if err := pool.QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := pool.QueryRow(ctx, countQuery, whereArgs...).Scan(&total); err != nil {
 		return QueryResult{}, fmt.Errorf("counting rows: %w", err)
 	}
 
-	dataQuery := fmt.Sprintf("SELECT * FROM %s LIMIT $1 OFFSET $2", quoteIdent(table))
-	rows, err := pool.Query(ctx, dataQuery, limit, offset)
+	paramOffset := len(whereArgs) + 1
+	dataQuery := fmt.Sprintf("SELECT * FROM %s%s LIMIT $%d OFFSET $%d",
+		quoteIdent(table), whereClause, paramOffset, paramOffset+1)
+	args := append(whereArgs, limit, offset)
+
+	rows, err := pool.Query(ctx, dataQuery, args...)
 	if err != nil {
 		return QueryResult{}, fmt.Errorf("querying data: %w", err)
 	}
@@ -61,6 +98,27 @@ func QueryTableData(ctx context.Context, pool *pgxpool.Pool, table string, offse
 		Rows:    resultRows,
 		Total:   total,
 	}, nil
+}
+
+func buildWhereClause(filters []FilterClause) (string, []any) {
+	if len(filters) == 0 {
+		return "", nil
+	}
+
+	var conditions []string
+	var args []any
+	paramIdx := 1
+
+	for _, f := range filters {
+		cond, arg := f.SQLCondition(paramIdx)
+		conditions = append(conditions, cond)
+		if arg != nil {
+			args = append(args, arg)
+			paramIdx++
+		}
+	}
+
+	return " WHERE " + strings.Join(conditions, " AND "), args
 }
 
 func QueryFKPreview(ctx context.Context, pool *pgxpool.Pool, refTable string, pkColumns []string, pkValues []string) (QueryResult, error) {

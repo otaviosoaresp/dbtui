@@ -21,12 +21,41 @@ type DataGrid struct {
 	graph        *schema.SchemaGraph
 	offset       int
 	total        int
+	filters      []FilterClause
 	width        int
 	height       int
 	focused      bool
 	loading      bool
 	err          error
 	expanding    bool
+}
+
+func (dg *DataGrid) Filters() []FilterClause {
+	return dg.filters
+}
+
+func (dg *DataGrid) AddFilter(fc FilterClause) {
+	for i, f := range dg.filters {
+		if f.Column == fc.Column {
+			dg.filters[i] = fc
+			return
+		}
+	}
+	dg.filters = append(dg.filters, fc)
+}
+
+func (dg *DataGrid) RemoveFilter(column string) {
+	filtered := make([]FilterClause, 0, len(dg.filters))
+	for _, f := range dg.filters {
+		if f.Column != column {
+			filtered = append(filtered, f)
+		}
+	}
+	dg.filters = filtered
+}
+
+func (dg *DataGrid) ClearFilters() {
+	dg.filters = nil
 }
 
 func NewDataGrid(pool *pgxpool.Pool) DataGrid {
@@ -65,6 +94,13 @@ func (dg *DataGrid) Focused() bool {
 
 func (dg *DataGrid) TableName() string {
 	return dg.tableName
+}
+
+func (dg *DataGrid) Reload() tea.Cmd {
+	dg.offset = 0
+	dg.loading = true
+	dg.err = nil
+	return dg.loadPageCmd()
 }
 
 func (dg *DataGrid) CursorColumnName() string {
@@ -232,8 +268,10 @@ func (dg DataGrid) loadPageCmd() tea.Cmd {
 	tableName := dg.tableName
 	offset := dg.offset
 	pool := dg.pool
+	filters := make([]db.FilterClause, len(dg.filters))
+	copy(filters, dg.filters)
 	return func() tea.Msg {
-		result, err := db.QueryTableData(context.Background(), pool, tableName, offset, pageSize)
+		result, err := db.QueryTableData(context.Background(), pool, tableName, offset, pageSize, filters)
 		if err != nil {
 			return TableDataLoadedMsg{Table: tableName, Err: err}
 		}
