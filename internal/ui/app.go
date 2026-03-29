@@ -274,18 +274,35 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		if a.focus == panelDataGrid && a.dataGrid.TableName() != "" {
 			col := a.dataGrid.CursorColumnName()
-			if col != "" {
-				a.mode = ModeFilter
-				a.filterInput.Activate(col)
+			if col == "" {
 				return a, nil
+			}
+			a.mode = ModeFilter
+			a.filterInput.Activate(col)
+			for _, fc := range a.dataGrid.Filters() {
+				if fc.Column == col {
+					a.filterInput.SetValue(fc.Operator, fc.Value)
+					break
+				}
+			}
+			return a, nil
+		}
+	case "x":
+		if a.focus == panelDataGrid {
+			col := a.dataGrid.CursorColumnName()
+			for _, fc := range a.dataGrid.Filters() {
+				if fc.Column == col {
+					a.dataGrid.RemoveFilter(col)
+					a.statusMsg = fmt.Sprintf("Filter removed: %s", col)
+					return a, a.dataGrid.Reload()
+				}
 			}
 		}
 	case "F":
 		if a.focus == panelDataGrid && len(a.dataGrid.Filters()) > 0 {
-			a.filterList.SetFilters(a.dataGrid.Filters())
-			a.filterList.SetSize(a.width, a.height)
-			a.filterList.Toggle()
-			return a, nil
+			a.dataGrid.ClearFilters()
+			a.statusMsg = "All filters cleared"
+			return a, a.dataGrid.Reload()
 		}
 	case "]":
 		return a, nil
@@ -589,8 +606,22 @@ func (a App) renderStatusBar() string {
 			hints = append(hints, keyStyle.Render("[u]")+descStyle.Render(" Back"))
 		}
 
+		hasFilterOnCol := false
+		for _, fc := range a.dataGrid.Filters() {
+			if fc.Column == a.dataGrid.CursorColumnName() {
+				hasFilterOnCol = true
+				break
+			}
+		}
+
+		hints = append(hints, keyStyle.Render("[f]")+descStyle.Render(" Filter"))
+		if hasFilterOnCol {
+			hints = append(hints, keyStyle.Render("[x]")+descStyle.Render(" Remove"))
+		}
+		if len(a.dataGrid.Filters()) > 0 {
+			hints = append(hints, keyStyle.Render("[F]")+descStyle.Render(" Clear all"))
+		}
 		hints = append(hints,
-			keyStyle.Render("[f]")+descStyle.Render(" Filter"),
 			keyStyle.Render("[:]")+descStyle.Render(" Cmd"),
 			keyStyle.Render("[p]")+descStyle.Render(" Preview"),
 			keyStyle.Render("[q]")+descStyle.Render(" Quit"),

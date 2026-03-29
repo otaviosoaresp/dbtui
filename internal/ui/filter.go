@@ -70,6 +70,21 @@ func (fi *FilterInput) Deactivate() {
 	fi.input.Blur()
 }
 
+func (fi *FilterInput) SetValue(operator, value string) {
+	switch operator {
+	case "IS NULL":
+		fi.input.SetValue("null")
+	case "IS NOT NULL":
+		fi.input.SetValue("!null")
+	case "LIKE":
+		fi.input.SetValue(value)
+	case "=":
+		fi.input.SetValue(value)
+	default:
+		fi.input.SetValue(operator + value)
+	}
+}
+
 func (fi *FilterInput) Active() bool {
 	return fi.active
 }
