@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dbtui
+      POSTGRES_PASSWORD: dbtui
+      POSTGRES_DB: dbtui_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./testdata/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbtui -d dbtui_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 5
