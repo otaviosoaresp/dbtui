@@ -53,6 +53,10 @@ func (sl *ScriptList) Focused() bool {
 	return sl.focused
 }
 
+func (sl *ScriptList) IsCreating() bool {
+	return sl.creating
+}
+
 type ScriptSelectedMsg struct {
 	Name string
 	SQL  string

@@ -377,7 +377,7 @@ func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
-		if !a.tableList.filtering {
+		if !a.tableList.filtering && !a.scriptList.IsCreating() {
 			return a, tea.Quit
 		}
 	case "tab":
