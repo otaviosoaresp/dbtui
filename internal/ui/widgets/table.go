@@ -152,6 +152,38 @@ func (t *Table) PageUp() {
 	t.clampScroll()
 }
 
+func (t *Table) MoveToFirstCol() {
+	t.cursorCol = 0
+	t.clampScroll()
+}
+
+func (t *Table) MoveToLastCol() {
+	if len(t.columns) > 0 {
+		t.cursorCol = len(t.columns) - 1
+	}
+	t.clampScroll()
+}
+
+func (t *Table) MoveToNextFKCol() {
+	for i := t.cursorCol + 1; i < len(t.columns); i++ {
+		if t.config.FKColumns[t.columns[i]] {
+			t.cursorCol = i
+			t.clampScroll()
+			return
+		}
+	}
+}
+
+func (t *Table) MoveToPrevFKCol() {
+	for i := t.cursorCol - 1; i >= 0; i-- {
+		if t.config.FKColumns[t.columns[i]] {
+			t.cursorCol = i
+			t.clampScroll()
+			return
+		}
+	}
+}
+
 func (t *Table) SetCursorRow(row int) {
 	t.cursorRow = row
 	t.clampCursor()

@@ -49,10 +49,13 @@ func (h HelpOverlay) View() string {
 	for _, b := range []struct{ k, d string }{
 		{"j / k", "Move down / up (rows)"},
 		{"h / l", "Move left / right (columns)"},
+		{"0 / $", "Jump to first / last column"},
+		{"w / b", "Jump to next / previous FK column"},
 		{"g / G", "Jump to top / bottom"},
 		{"d / u", "Page down / up"},
 		{"n / N", "Next / previous data page (LIMIT/OFFSET)"},
-		{"Tab", "Switch panel (table list / data grid)"},
+		{"Tab", "Switch panel (left / data grid)"},
+		{"S", "Switch left panel (Tables / Scripts)"},
 		{"] / [", "Next / previous buffer"},
 		{"c", "Fuzzy jump to column"},
 	} {
@@ -85,6 +88,24 @@ func (h HelpOverlay) View() string {
 		{"F", "Clear all filters"},
 		{"o", "Toggle order (ASC -> DESC -> remove)"},
 		{"O", "Clear all orders"},
+	} {
+		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
+	}
+
+	lines = append(lines, sectionStyle.Render("  Clipboard"))
+	for _, b := range []struct{ k, d string }{
+		{"y", "Copy cell value to clipboard"},
+		{"Y", "Copy entire row (tab-separated)"},
+	} {
+		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
+	}
+
+	lines = append(lines, sectionStyle.Render("  Scripts"))
+	for _, b := range []struct{ k, d string }{
+		{"S", "Switch to Scripts panel"},
+		{"a", "Create new script (in Scripts panel)"},
+		{"e", "Edit script in $EDITOR (in Scripts panel)"},
+		{"d", "Delete script (in Scripts panel)"},
 	} {
 		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
 	}

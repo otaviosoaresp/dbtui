@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -19,7 +20,15 @@ type focusedPanel int
 
 const (
 	panelTableList focusedPanel = iota
+	panelScriptList
 	panelDataGrid
+)
+
+type leftPanelTab int
+
+const (
+	tabTables leftPanelTab = iota
+	tabScripts
 )
 
 type AppMode int
@@ -53,6 +62,8 @@ type App struct {
 	pool          *pgxpool.Pool
 	graph         schema.SchemaGraph
 	tableList     TableList
+	scriptList    ScriptList
+	leftTab       leftPanelTab
 	buffers       []BufferInfo
 	activeBuffer  int
 	fkPreview     FKPreview
@@ -101,15 +112,16 @@ func NewApp(pool *pgxpool.Pool) App {
 	fp := NewFKPreview(pool)
 
 	return App{
-		pool:        pool,
-		tableList:   tl,
-		fkPreview:   fp,
-		filterInput: NewFilterInput(),
+		pool:         pool,
+		tableList:    tl,
+		scriptList:   NewScriptList(),
+		fkPreview:    fp,
+		filterInput:  NewFilterInput(),
 		commandLine:  NewCommandLine(),
 		columnPicker: NewColumnPicker(),
 		focus:        panelTableList,
-		loading:     true,
-		statusMsg:   "Loading schema...",
+		loading:      true,
+		statusMsg:    "Loading schema...",
 	}
 }
 
@@ -244,6 +256,22 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CommandSubmitMsg:
 		return a.handleCommandSubmit(msg)
 
+	case ScriptSelectedMsg:
+		return a.executeRawSQL(msg.SQL)
+
+	case ScriptEditMsg:
+		a.scriptList.Refresh()
+		return a, OpenInEditor(msg.Name)
+
+	case ScriptEditDoneMsg:
+		a.scriptList.Refresh()
+		if msg.Err != nil {
+			a.statusMsg = fmt.Sprintf("Editor error: %v", msg.Err)
+		} else {
+			a.statusMsg = fmt.Sprintf("Script saved: %s", msg.Name)
+		}
+		return a, nil
+
 	case UpdateResultMsg:
 		if msg.Err != nil {
 			a.statusMsg = fmt.Sprintf("Update error: %v", msg.Err)
@@ -284,6 +312,12 @@ func (a App) routeToFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.navStack.Clear()
 			return a, a.selectTable(newSel)
 		}
+		return a, cmd
+	}
+
+	if a.focus == panelScriptList {
+		var cmd tea.Cmd
+		a.scriptList, cmd = a.scriptList.Update(msg)
 		return a, cmd
 	}
 
@@ -347,9 +381,25 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 	case "tab":
-		if a.focus == panelTableList && a.dg() != nil && a.dg().TableName() != "" {
-			a.switchFocus(panelDataGrid)
+		switch a.focus {
+		case panelTableList, panelScriptList:
+			if a.dg() != nil && a.dg().TableName() != "" {
+				a.switchFocus(panelDataGrid)
+			}
+		default:
+			if a.leftTab == tabTables {
+				a.switchFocus(panelTableList)
+			} else {
+				a.switchFocus(panelScriptList)
+			}
+		}
+		return a, nil
+	case "S":
+		if a.leftTab == tabTables {
+			a.leftTab = tabScripts
+			a.switchFocus(panelScriptList)
 		} else {
+			a.leftTab = tabTables
 			a.switchFocus(panelTableList)
 		}
 		return a, nil
@@ -430,6 +480,24 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "L":
 		if a.fkPreview.Visible() {
 			a.fkPreview.ScrollRight()
+			return a, nil
+		}
+	case "y":
+		if a.focus == panelDataGrid && a.dg() != nil {
+			val := a.dg().CursorCellValue()
+			if val != "" {
+				clipboard.WriteAll(val)
+				a.statusMsg = fmt.Sprintf("Copied: %s", truncateForStatus(val, 40))
+			}
+			return a, nil
+		}
+	case "Y":
+		if a.focus == panelDataGrid && a.dg() != nil {
+			values := a.dg().CursorRowValues()
+			if len(values) > 0 {
+				clipboard.WriteAll(strings.Join(values, "\t"))
+				a.statusMsg = "Copied row (tab-separated)"
+			}
 			return a, nil
 		}
 	case "o":
@@ -872,14 +940,19 @@ func (a App) handleRawQueryResult(msg RawQueryResultMsg) (tea.Model, tea.Cmd) {
 
 func (a *App) switchFocus(panel focusedPanel) {
 	a.focus = panel
+	a.tableList.Blur()
+	a.scriptList.Blur()
+	if a.dg() != nil {
+		a.dg().Blur()
+	}
 	switch panel {
 	case panelTableList:
+		a.leftTab = tabTables
 		a.tableList.Focus()
-		if a.dg() != nil {
-			a.dg().Blur()
-		}
+	case panelScriptList:
+		a.leftTab = tabScripts
+		a.scriptList.Focus()
 	case panelDataGrid:
-		a.tableList.Blur()
 		if a.dg() != nil {
 			a.dg().Focus()
 		}
@@ -892,6 +965,7 @@ func (a *App) updateLayout() {
 	mainHeight := a.height - 3 - previewH
 
 	a.tableList.SetSize(tableListWidth, mainHeight)
+	a.scriptList.SetSize(tableListWidth, mainHeight)
 
 	gridWidth := a.width - tableListWidth
 	if tableListWidth == 0 {
@@ -1017,10 +1091,14 @@ func (a App) renderStatusBar() string {
 	} else if a.tableList.filtering {
 		hints = append(hints, keyStyle.Render("[Enter]")+descStyle.Render(" Select"), keyStyle.Render("[Esc]")+descStyle.Render(" Cancel"))
 	} else if a.focus == panelTableList {
+		tabLabel := "Scripts"
+		if a.leftTab == tabScripts {
+			tabLabel = "Tables"
+		}
 		hints = append(hints,
 			keyStyle.Render("[/]")+descStyle.Render(" Search"),
 			keyStyle.Render("[Enter]")+descStyle.Render(" Open"),
-			keyStyle.Render("[:]")+descStyle.Render(" Cmd"),
+			keyStyle.Render("[S]")+descStyle.Render(" "+tabLabel),
 			keyStyle.Render("[Tab]")+descStyle.Render(" Grid"),
 			keyStyle.Render("[q]")+descStyle.Render(" Quit"),
 		)
@@ -1151,7 +1229,15 @@ func (a App) renderMainContent() string {
 	if tableListWidth == 0 {
 		return gridView
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, a.tableList.View(), gridView)
+
+	var leftPanel string
+	if a.leftTab == tabScripts {
+		leftPanel = a.scriptList.View()
+	} else {
+		leftPanel = a.tableList.View()
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, gridView)
 }
 
 func (a App) renderEmptyGrid() string {
@@ -1233,6 +1319,13 @@ func isConnectionError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "connection") || strings.Contains(msg, "refused") ||
 		strings.Contains(msg, "broken pipe") || strings.Contains(msg, "reset by peer") || strings.Contains(msg, "closed pool")
+}
+
+func truncateForStatus(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-3] + "..."
 }
 
 func buildPKFromRow(columns []string, values []string, graph *schema.SchemaGraph, tableName string) PKValue {
