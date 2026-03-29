@@ -20,17 +20,19 @@ func main() {
 		*dsn = os.Getenv("DATABASE_URL")
 	}
 
-	if *dsn == "" {
-		fmt.Fprintln(os.Stderr, "Error: connection string required")
-		fmt.Fprintln(os.Stderr, "Usage: dbtui --dsn \"postgres://user:pass@localhost:5432/dbname\"")
-		fmt.Fprintln(os.Stderr, "   or: DATABASE_URL=... dbtui")
-		os.Exit(1)
+	if *dsn != "" {
+		startWithDSN(*dsn)
+		return
 	}
 
+	startWithForm()
+}
+
+func startWithDSN(dsn string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cfg := db.DefaultConnConfig(*dsn)
+	cfg := db.DefaultConnConfig(dsn)
 	pool, err := db.Connect(ctx, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -40,6 +42,16 @@ func main() {
 
 	app := ui.NewApp(pool)
 	p := tea.NewProgram(app, tea.WithAltScreen())
+
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func startWithForm() {
+	root := ui.NewRoot()
+	p := tea.NewProgram(root, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

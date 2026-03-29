@@ -275,7 +275,7 @@ func (a *App) selectTable(name string) tea.Cmd {
 	return a.dataGrid.LoadTable(name)
 }
 
-func (a *App) handleSchemaLoaded(msg SchemaLoadedMsg) (tea.Model, tea.Cmd) {
+func (a App) handleSchemaLoaded(msg SchemaLoadedMsg) (tea.Model, tea.Cmd) {
 	a.loading = false
 	if msg.Err != nil {
 		a.err = msg.Err
@@ -303,7 +303,7 @@ func (a *App) handleSchemaLoaded(msg SchemaLoadedMsg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
-func (a *App) handleSchemaRefreshed(msg SchemaRefreshedMsg) (tea.Model, tea.Cmd) {
+func (a App) handleSchemaRefreshed(msg SchemaRefreshedMsg) (tea.Model, tea.Cmd) {
 	loaded := SchemaLoadedMsg(msg)
 	return a.handleSchemaLoaded(loaded)
 }

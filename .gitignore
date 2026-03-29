@@ -1,4 +1,4 @@
-dbtui
+/dbtui
 dist/
 *.exe
 *.exe~
