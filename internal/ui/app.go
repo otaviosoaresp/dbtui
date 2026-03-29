@@ -20,6 +20,28 @@ const (
 	panelDataGrid
 )
 
+type AppMode int
+
+const (
+	ModeNormal AppMode = iota
+	ModeFilter
+	ModeCommand
+	ModeInsert
+)
+
+func (m AppMode) String() string {
+	switch m {
+	case ModeFilter:
+		return "FILTER"
+	case ModeCommand:
+		return "COMMAND"
+	case ModeInsert:
+		return "INSERT"
+	default:
+		return "NORMAL"
+	}
+}
+
 type App struct {
 	pool           *pgxpool.Pool
 	graph          schema.SchemaGraph
@@ -29,6 +51,7 @@ type App struct {
 	navStack       NavigationStack
 	help           HelpOverlay
 	focus          focusedPanel
+	mode           AppMode
 	width          int
 	height         int
 	loading        bool
@@ -164,19 +187,29 @@ func (a *App) triggerFKPreview(existingCmd tea.Cmd) tea.Cmd {
 }
 
 func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		return a, tea.Quit
+	}
+
 	if a.dataGrid.IsExpanding() {
 		var cmd tea.Cmd
 		a.dataGrid, cmd = a.dataGrid.Update(msg)
 		return a, cmd
 	}
 
+	if a.mode != ModeNormal {
+		return a.handleModalKeyPress(msg)
+	}
+
+	return a.handleNormalMode(msg)
+}
+
+func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
 		if !a.tableList.filtering {
 			return a, tea.Quit
 		}
-	case "ctrl+c":
-		return a, tea.Quit
 	case "tab":
 		if a.focus == panelTableList && a.dataGrid.TableName() != "" {
 			a.switchFocus(panelDataGrid)
@@ -217,12 +250,34 @@ func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a.handleFollowFK()
 		}
 	case "backspace", "u":
-		if a.focus == panelDataGrid {
+		if a.focus == panelDataGrid && a.navStack.Len() > 0 {
 			return a.handleNavigateBack()
 		}
+	case "]":
+		return a, nil
+	case "[":
+		return a, nil
 	}
 
 	return a.routeToFocused(msg)
+}
+
+func (a App) handleModalKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "esc" {
+		a.mode = ModeNormal
+		return a, nil
+	}
+
+	switch a.mode {
+	case ModeFilter:
+		return a, nil
+	case ModeCommand:
+		return a, nil
+	case ModeInsert:
+		return a, nil
+	}
+
+	return a, nil
 }
 
 func (a App) handleFollowFK() (tea.Model, tea.Cmd) {
@@ -416,8 +471,18 @@ func (a App) renderStatusBar() string {
 		Background(lipgloss.Color("236")).
 		Foreground(lipgloss.Color("250"))
 
+	modeStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("236")).
+		Foreground(lipgloss.Color("3")).
+		Bold(true)
+
 	var hints []string
-	if a.tableList.filtering {
+
+	if a.mode != ModeNormal {
+		modeLabel := modeStyle.Render(" -- " + a.mode.String() + " -- ")
+		hints = append(hints, modeLabel)
+		hints = append(hints, keyStyle.Render("[Esc]")+descStyle.Render(" Normal"))
+	} else if a.tableList.filtering {
 		hints = append(hints,
 			keyStyle.Render("[Enter]")+descStyle.Render(" Select"),
 			keyStyle.Render("[Esc]")+descStyle.Render(" Cancel"),
@@ -440,10 +505,11 @@ func (a App) renderStatusBar() string {
 		hints = append(hints,
 			keyStyle.Render("[h/l]")+descStyle.Render(" Cols"),
 			keyStyle.Render("[j/k]")+descStyle.Render(" Rows"),
+			keyStyle.Render("[d/u]")+descStyle.Render(" Page"),
 		)
 
 		if isFKCol {
-			hints = append(hints, keyStyle.Render("[Enter]")+descStyle.Render(" Follow FK"))
+			hints = append(hints, keyStyle.Render("[Enter]")+descStyle.Render(" FK"))
 		}
 
 		if a.navStack.Len() > 0 {
@@ -451,9 +517,9 @@ func (a App) renderStatusBar() string {
 		}
 
 		hints = append(hints,
+			keyStyle.Render("[f]")+descStyle.Render(" Filter"),
+			keyStyle.Render("[:]")+descStyle.Render(" Cmd"),
 			keyStyle.Render("[p]")+descStyle.Render(" Preview"),
-			keyStyle.Render("[e]")+descStyle.Render(" Expand"),
-			keyStyle.Render("[Tab]")+descStyle.Render(" Tables"),
 			keyStyle.Render("[q]")+descStyle.Render(" Quit"),
 		)
 	}

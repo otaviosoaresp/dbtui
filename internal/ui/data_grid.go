@@ -157,9 +157,9 @@ func (dg DataGrid) updateNormal(msg tea.KeyMsg) (DataGrid, tea.Cmd) {
 		dg.table.MoveToTop()
 	case "G":
 		dg.table.MoveToBottom()
-	case "ctrl+d":
+	case "d":
 		dg.table.PageDown()
-	case "ctrl+u":
+	case "u":
 		dg.table.PageUp()
 	case "e":
 		dg.expanding = true

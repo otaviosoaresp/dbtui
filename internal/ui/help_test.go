@@ -55,9 +55,10 @@ func TestHelpOverlay_View_Visible(t *testing.T) {
 
 	expectedBindings := []string{
 		"j / k",
+		"d / u",
 		"Tab",
-		"Follow FK",
-		"Refresh",
+		"Filter mode",
+		"Command mode",
 		"Quit",
 	}
 

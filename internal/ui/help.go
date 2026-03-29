@@ -59,35 +59,37 @@ func (h HelpOverlay) View() string {
 	lines = append(lines, titleStyle.Render("  dbTUI - Keyboard Shortcuts"))
 	lines = append(lines, "")
 
-	lines = append(lines, sectionStyle.Render("  Navigation"))
+	lines = append(lines, sectionStyle.Render("  Normal Mode"))
 	bindings := []struct{ key, desc string }{
 		{"j / k", "Move down / up"},
 		{"h / l", "Move left / right (columns)"},
 		{"g / G", "Jump to top / bottom"},
-		{"Ctrl+d / Ctrl+u", "Page down / up"},
-		{"n / N", "Next / previous page"},
+		{"d / u", "Page down / up"},
+		{"n / N", "Next / previous data page"},
 		{"Tab", "Switch panel focus"},
-		{"Shift+Tab", "Focus table list"},
+		{"] / [", "Next / previous buffer"},
 	}
 	for _, b := range bindings {
 		lines = append(lines, "  "+keyStyle.Render(b.key)+descStyle.Render(b.desc))
 	}
 
-	lines = append(lines, sectionStyle.Render("  Tables"))
+	lines = append(lines, sectionStyle.Render("  Tables & FK"))
 	bindings = []struct{ key, desc string }{
 		{"/", "Fuzzy search tables"},
 		{"Enter", "Select table / Follow FK"},
-		{"Esc", "Cancel search"},
+		{"u", "Go back in FK navigation"},
+		{"p", "Toggle FK preview panel"},
 	}
 	for _, b := range bindings {
 		lines = append(lines, "  "+keyStyle.Render(b.key)+descStyle.Render(b.desc))
 	}
 
-	lines = append(lines, sectionStyle.Render("  FK Navigation"))
+	lines = append(lines, sectionStyle.Render("  Modes (vim-like)"))
 	bindings = []struct{ key, desc string }{
-		{"Enter", "Follow FK (on FK column)"},
-		{"u / Backspace", "Go back in navigation"},
-		{"p", "Toggle FK preview panel"},
+		{"f", "Filter mode (filter current column)"},
+		{":", "Command mode (SQL / scripts)"},
+		{"i", "Insert mode (edit cell)"},
+		{"Esc", "Back to Normal mode"},
 	}
 	for _, b := range bindings {
 		lines = append(lines, "  "+keyStyle.Render(b.key)+descStyle.Render(b.desc))
