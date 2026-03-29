@@ -177,13 +177,15 @@ func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "ctrl+c":
 		return a, tea.Quit
-	case "ctrl+h":
-		a.switchFocus(panelTableList)
-		return a, nil
-	case "ctrl+l":
-		if a.dataGrid.TableName() != "" {
+	case "tab":
+		if a.focus == panelTableList && a.dataGrid.TableName() != "" {
 			a.switchFocus(panelDataGrid)
+		} else {
+			a.switchFocus(panelTableList)
 		}
+		return a, nil
+	case "shift+tab":
+		a.switchFocus(panelTableList)
 		return a, nil
 	case "/":
 		if !a.tableList.filtering {
@@ -421,7 +423,7 @@ func (a App) renderStatusBar() string {
 		hints = append(hints,
 			keyStyle.Render("[/]")+descStyle.Render(" Search"),
 			keyStyle.Render("[Enter]")+descStyle.Render(" Open"),
-			keyStyle.Render("[Ctrl+l]")+descStyle.Render(" Grid"),
+			keyStyle.Render("[Tab]")+descStyle.Render(" Grid"),
 			keyStyle.Render("[R]")+descStyle.Render(" Refresh"),
 			keyStyle.Render("[q]")+descStyle.Render(" Quit"),
 		)
@@ -448,7 +450,7 @@ func (a App) renderStatusBar() string {
 		hints = append(hints,
 			keyStyle.Render("[p]")+descStyle.Render(" Preview"),
 			keyStyle.Render("[e]")+descStyle.Render(" Expand"),
-			keyStyle.Render("[Ctrl+h]")+descStyle.Render(" Tables"),
+			keyStyle.Render("[Tab]")+descStyle.Render(" Tables"),
 			keyStyle.Render("[q]")+descStyle.Render(" Quit"),
 		)
 	}

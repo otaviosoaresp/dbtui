@@ -66,8 +66,8 @@ func (h HelpOverlay) View() string {
 		{"g / G", "Jump to top / bottom"},
 		{"Ctrl+d / Ctrl+u", "Page down / up"},
 		{"n / N", "Next / previous page"},
-		{"Ctrl+h", "Focus table list"},
-		{"Ctrl+l", "Focus data grid"},
+		{"Tab", "Switch panel focus"},
+		{"Shift+Tab", "Focus table list"},
 	}
 	for _, b := range bindings {
 		lines = append(lines, "  "+keyStyle.Render(b.key)+descStyle.Render(b.desc))
