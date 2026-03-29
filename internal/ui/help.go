@@ -78,11 +78,13 @@ func (h HelpOverlay) View() string {
 		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
 	}
 
-	lines = append(lines, sectionStyle.Render("  Filtering"))
+	lines = append(lines, sectionStyle.Render("  Filtering & Ordering"))
 	for _, b := range []struct{ k, d string }{
 		{"f", "Filter column (=, !=, >, <, %like%, null)"},
 		{"x", "Remove filter on current column"},
 		{"F", "Clear all filters"},
+		{"o", "Toggle order (ASC -> DESC -> remove)"},
+		{"O", "Clear all orders"},
 	} {
 		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
 	}

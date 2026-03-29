@@ -22,6 +22,7 @@ type DataGrid struct {
 	offset       int
 	total        int
 	filters      []FilterClause
+	orders       []db.OrderClause
 	width        int
 	height       int
 	focused      bool
@@ -56,6 +57,49 @@ func (dg *DataGrid) RemoveFilter(column string) {
 
 func (dg *DataGrid) ClearFilters() {
 	dg.filters = nil
+}
+
+func (dg *DataGrid) Orders() []db.OrderClause {
+	return dg.orders
+}
+
+func (dg *DataGrid) SetOrder(column, direction string) {
+	for i, o := range dg.orders {
+		if o.Column == column {
+			dg.orders[i].Direction = direction
+			return
+		}
+	}
+	dg.orders = append(dg.orders, db.OrderClause{Column: column, Direction: direction})
+}
+
+func (dg *DataGrid) ToggleOrder(column string) string {
+	for i, o := range dg.orders {
+		if o.Column == column {
+			if o.Direction == "ASC" {
+				dg.orders[i].Direction = "DESC"
+				return "DESC"
+			}
+			dg.orders = append(dg.orders[:i], dg.orders[i+1:]...)
+			return ""
+		}
+	}
+	dg.orders = append(dg.orders, db.OrderClause{Column: column, Direction: "ASC"})
+	return "ASC"
+}
+
+func (dg *DataGrid) RemoveOrder(column string) {
+	filtered := make([]db.OrderClause, 0, len(dg.orders))
+	for _, o := range dg.orders {
+		if o.Column != column {
+			filtered = append(filtered, o)
+		}
+	}
+	dg.orders = filtered
+}
+
+func (dg *DataGrid) ClearOrders() {
+	dg.orders = nil
 }
 
 func NewDataGrid(pool *pgxpool.Pool) DataGrid {
@@ -287,8 +331,10 @@ func (dg DataGrid) loadPageCmd() tea.Cmd {
 	pool := dg.pool
 	filters := make([]db.FilterClause, len(dg.filters))
 	copy(filters, dg.filters)
+	orders := make([]db.OrderClause, len(dg.orders))
+	copy(orders, dg.orders)
 	return func() tea.Msg {
-		result, err := db.QueryTableData(context.Background(), pool, tableName, offset, pageSize, filters)
+		result, err := db.QueryTableData(context.Background(), pool, tableName, offset, pageSize, filters, orders)
 		if err != nil {
 			return TableDataLoadedMsg{Table: tableName, Err: err}
 		}

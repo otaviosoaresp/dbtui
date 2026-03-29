@@ -46,7 +46,16 @@ func (fc FilterClause) SQLCondition(paramIdx int) (string, any) {
 	}
 }
 
-func QueryTableData(ctx context.Context, pool *pgxpool.Pool, table string, offset, limit int, filters []FilterClause) (QueryResult, error) {
+type OrderClause struct {
+	Column    string
+	Direction string // "ASC" or "DESC"
+}
+
+func (oc OrderClause) String() string {
+	return oc.Column + " " + oc.Direction
+}
+
+func QueryTableData(ctx context.Context, pool *pgxpool.Pool, table string, offset, limit int, filters []FilterClause, orders []OrderClause) (QueryResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -58,9 +67,11 @@ func QueryTableData(ctx context.Context, pool *pgxpool.Pool, table string, offse
 		return QueryResult{}, fmt.Errorf("counting rows: %w", err)
 	}
 
+	orderClause := buildOrderClause(orders)
+
 	paramOffset := len(whereArgs) + 1
-	dataQuery := fmt.Sprintf("SELECT * FROM %s%s LIMIT $%d OFFSET $%d",
-		quoteIdent(table), whereClause, paramOffset, paramOffset+1)
+	dataQuery := fmt.Sprintf("SELECT * FROM %s%s%s LIMIT $%d OFFSET $%d",
+		quoteIdent(table), whereClause, orderClause, paramOffset, paramOffset+1)
 	args := append(whereArgs, limit, offset)
 
 	rows, err := pool.Query(ctx, dataQuery, args...)
@@ -119,6 +130,21 @@ func buildWhereClause(filters []FilterClause) (string, []any) {
 	}
 
 	return " WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func buildOrderClause(orders []OrderClause) string {
+	if len(orders) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, o := range orders {
+		dir := "ASC"
+		if o.Direction == "DESC" {
+			dir = "DESC"
+		}
+		parts = append(parts, fmt.Sprintf(`"%s" %s`, o.Column, dir))
+	}
+	return " ORDER BY " + strings.Join(parts, ", ")
 }
 
 func QueryFKPreview(ctx context.Context, pool *pgxpool.Pool, refTable string, pkColumns []string, pkValues []string) (QueryResult, error) {

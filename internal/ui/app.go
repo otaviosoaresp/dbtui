@@ -432,6 +432,28 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.fkPreview.ScrollRight()
 			return a, nil
 		}
+	case "o":
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" {
+			col := a.dg().CursorColumnName()
+			if col != "" {
+				dir := a.dg().ToggleOrder(col)
+				switch dir {
+				case "ASC":
+					a.statusMsg = fmt.Sprintf("Order: %s ASC", col)
+				case "DESC":
+					a.statusMsg = fmt.Sprintf("Order: %s DESC", col)
+				default:
+					a.statusMsg = fmt.Sprintf("Order removed: %s", col)
+				}
+				return a, a.dg().Reload()
+			}
+		}
+	case "O":
+		if a.focus == panelDataGrid && a.dg() != nil && len(a.dg().Orders()) > 0 {
+			a.dg().ClearOrders()
+			a.statusMsg = "All orders cleared"
+			return a, a.dg().Reload()
+		}
 	case "c":
 		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" {
 			columns := a.dg().Columns()
@@ -952,6 +974,15 @@ func (a App) View() string {
 		breadcrumb += " " + filterStyle.Render("[F: "+strings.Join(parts, ", ")+"]")
 	}
 
+	if a.dg() != nil && len(a.dg().Orders()) > 0 {
+		orderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+		var parts []string
+		for _, o := range a.dg().Orders() {
+			parts = append(parts, o.String())
+		}
+		breadcrumb += " " + orderStyle.Render("[O: "+strings.Join(parts, ", ")+"]")
+	}
+
 	sections = append(sections, breadcrumb)
 	sections = append(sections, a.renderMainContent())
 
@@ -1023,6 +1054,8 @@ func (a App) renderStatusBar() string {
 		if hasFilterOnCol {
 			hints = append(hints, keyStyle.Render("[x]")+descStyle.Render(" Rm"))
 		}
+
+		hints = append(hints, keyStyle.Render("[o]")+descStyle.Render(" Order"))
 
 		if a.fkPreview.Visible() {
 			hints = append(hints, keyStyle.Render("[H/L]")+descStyle.Render(" Scroll preview"))
