@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/otaviosoaresp/dbtui/internal/db"
 	"github.com/otaviosoaresp/dbtui/internal/schema"
+	"github.com/otaviosoaresp/dbtui/internal/ui/widgets"
 )
 
 const (
@@ -26,27 +27,32 @@ type cacheEntry struct {
 }
 
 type FKPreview struct {
-	pool          *pgxpool.Pool
-	graph         *schema.SchemaGraph
-	visible       bool
-	manualToggle  bool
-	loading       bool
-	debounceTag   int
-	sourceTable   string
-	sourceCol     string
-	refTable      string
-	pendingValue  string
-	columns       []string
-	values        []string
-	errMsg        string
-	width         int
-	cache         *lru.Cache[string, cacheEntry]
+	pool         *pgxpool.Pool
+	graph        *schema.SchemaGraph
+	visible      bool
+	loading      bool
+	debounceTag  int
+	sourceTable  string
+	sourceCol    string
+	refTable     string
+	pendingValue string
+	columns      []string
+	values       []string
+	errMsg       string
+	width        int
+	table        widgets.Table
+	cache        *lru.Cache[string, cacheEntry]
 }
 
 func NewFKPreview(pool *pgxpool.Pool) FKPreview {
 	cache, _ := lru.New[string, cacheEntry](cacheSize)
+	cfg := widgets.DefaultConfig()
+	cfg.ShowCursor = false
+	cfg.ShowHeader = true
+
 	return FKPreview{
 		pool:  pool,
+		table: widgets.NewTable(cfg),
 		cache: cache,
 	}
 }
@@ -57,38 +63,39 @@ func (fp *FKPreview) SetGraph(graph *schema.SchemaGraph) {
 
 func (fp *FKPreview) SetWidth(width int) {
 	fp.width = width
+	fp.table.SetSize(width-4, previewHeight-2)
 }
 
 func (fp *FKPreview) Toggle() {
-	fp.manualToggle = !fp.manualToggle
+	fp.visible = !fp.visible
 }
 
 func (fp *FKPreview) Visible() bool {
-	if fp.manualToggle {
-		return !fp.visible
-	}
 	return fp.visible
 }
 
 func (fp *FKPreview) Height() int {
-	if fp.Visible() {
+	if fp.visible {
 		return previewHeight
 	}
 	return 0
 }
 
 func (fp FKPreview) TriggerPreview(tableName, columnName, cellValue string) (FKPreview, tea.Cmd) {
-	if fp.graph == nil {
-		fp.visible = false
+	if !fp.visible || fp.graph == nil {
 		return fp, nil
 	}
 
 	if !fp.graph.IsFKColumn(tableName, columnName) {
-		fp.visible = false
+		fp.sourceTable = tableName
+		fp.sourceCol = columnName
+		fp.refTable = ""
+		fp.columns = nil
+		fp.values = nil
+		fp.errMsg = ""
 		return fp, nil
 	}
 
-	fp.visible = true
 	fp.sourceTable = tableName
 	fp.sourceCol = columnName
 
@@ -110,6 +117,7 @@ func (fp FKPreview) TriggerPreview(tableName, columnName, cellValue string) (FKP
 		fp.values = entry.Values
 		fp.errMsg = ""
 		fp.loading = false
+		fp.updateTable()
 		return fp, nil
 	}
 
@@ -169,7 +177,7 @@ func (fp FKPreview) HandleDebounce(msg FKPreviewDebounceMsg) (FKPreview, tea.Cmd
 			SourceColumn: srcCol,
 			RefTable:     refTable,
 			Columns:      result.Columns,
-			Values:        values,
+			Values:       values,
 		}
 	}
 }
@@ -199,6 +207,7 @@ func (fp FKPreview) HandleLoaded(msg FKPreviewLoadedMsg) FKPreview {
 	fp.values = msg.Values
 	fp.errMsg = ""
 	fp.refTable = msg.RefTable
+	fp.updateTable()
 
 	if fp.graph != nil {
 		fk, ok := fp.graph.FKForColumn(fp.sourceTable, fp.sourceCol)
@@ -214,8 +223,14 @@ func (fp FKPreview) HandleLoaded(msg FKPreviewLoadedMsg) FKPreview {
 	return fp
 }
 
+func (fp *FKPreview) updateTable() {
+	if len(fp.columns) > 0 && len(fp.values) > 0 {
+		fp.table.SetData(fp.columns, [][]string{fp.values})
+	}
+}
+
 func (fp FKPreview) View() string {
-	if !fp.Visible() || fp.width == 0 {
+	if !fp.visible || fp.width == 0 {
 		return ""
 	}
 
@@ -227,6 +242,8 @@ func (fp FKPreview) View() string {
 	header := ""
 	if fp.sourceCol != "" && fp.refTable != "" {
 		header = headerStyle.Render(fmt.Sprintf(" %s.%s -> %s", fp.sourceTable, fp.sourceCol, fp.refTable))
+	} else if !fp.loading && fp.errMsg == "" {
+		header = headerStyle.Render(" FK Preview (move to FK column)")
 	}
 
 	var content string
@@ -236,18 +253,9 @@ func (fp FKPreview) View() string {
 	case fp.errMsg != "":
 		content = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render(" " + fp.errMsg)
 	case len(fp.columns) > 0 && len(fp.values) > 0:
-		pairs := make([]string, 0, len(fp.columns))
-		for i, col := range fp.columns {
-			val := ""
-			if i < len(fp.values) {
-				val = fp.values[i]
-				if len(val) > 30 {
-					val = val[:27] + "..."
-				}
-			}
-			pairs = append(pairs, fmt.Sprintf("%s:%s", col, val))
-		}
-		content = " " + strings.Join(pairs, " | ")
+		content = fp.table.View()
+	case fp.refTable == "" && fp.sourceCol != "":
+		content = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(" Not a FK column")
 	}
 
 	innerHeight := previewHeight - 2

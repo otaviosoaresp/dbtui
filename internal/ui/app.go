@@ -207,6 +207,9 @@ func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.focus == panelDataGrid {
 			a.fkPreview.Toggle()
 			a.updateLayout()
+			if a.fkPreview.Visible() {
+				return a, a.triggerFKPreview(nil)
+			}
 			return a, nil
 		}
 	case "enter":
