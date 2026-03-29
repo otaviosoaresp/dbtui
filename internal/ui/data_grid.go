@@ -111,6 +111,15 @@ func (dg *DataGrid) SetQueryResult(columns []string, rows [][]string, total int)
 	dg.table.SetData(columns, rows)
 }
 
+func (dg *DataGrid) JumpToColumn(name string) {
+	for i, col := range dg.table.Columns() {
+		if col == name {
+			dg.table.SetCursorCol(i)
+			return
+		}
+	}
+}
+
 func (dg *DataGrid) CursorColumnName() string {
 	return dg.table.CursorColumnName()
 }

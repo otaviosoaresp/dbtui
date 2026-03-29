@@ -62,6 +62,7 @@ type App struct {
 	filterList    FilterList
 	commandLine   CommandLine
 	recordView    RecordView
+	columnPicker  ColumnPicker
 	editInput     textinput.Model
 	editColumn    string
 	editOriginal  string
@@ -104,8 +105,9 @@ func NewApp(pool *pgxpool.Pool) App {
 		tableList:   tl,
 		fkPreview:   fp,
 		filterInput: NewFilterInput(),
-		commandLine: NewCommandLine(),
-		focus:       panelTableList,
+		commandLine:  NewCommandLine(),
+		columnPicker: NewColumnPicker(),
+		focus:        panelTableList,
 		loading:     true,
 		statusMsg:   "Loading schema...",
 	}
@@ -172,6 +174,17 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyMsg:
+		if a.columnPicker.Visible() {
+			var cmd tea.Cmd
+			a.columnPicker, cmd = a.columnPicker.Update(msg)
+			if !a.columnPicker.Visible() && a.columnPicker.Selected() != "" {
+				if a.dg() != nil {
+					a.dg().JumpToColumn(a.columnPicker.Selected())
+					a.statusMsg = fmt.Sprintf("Column: %s", a.columnPicker.Selected())
+				}
+			}
+			return a, cmd
+		}
 		if a.recordView.Visible() {
 			if msg.String() == "esc" || msg.String() == "v" || msg.String() == "q" {
 				a.recordView.Hide()
@@ -418,6 +431,14 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.fkPreview.Visible() {
 			a.fkPreview.ScrollRight()
 			return a, nil
+		}
+	case "c":
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" {
+			columns := a.dg().Columns()
+			if len(columns) > 0 {
+				a.columnPicker.Show(columns, a.width, a.height)
+				return a, nil
+			}
 		}
 	case "v":
 		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" {
@@ -856,6 +877,9 @@ func (a App) View() string {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, "Terminal too small\n(min 40 columns)")
 	}
 
+	if a.columnPicker.Visible() {
+		return a.columnPicker.View()
+	}
 	if a.recordView.Visible() {
 		return a.recordView.View()
 	}
