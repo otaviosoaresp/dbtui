@@ -379,6 +379,16 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.statusMsg = "All filters cleared"
 			return a, a.dg().Reload()
 		}
+	case "H":
+		if a.fkPreview.Visible() {
+			a.fkPreview.ScrollLeft()
+			return a, nil
+		}
+	case "L":
+		if a.fkPreview.Visible() {
+			a.fkPreview.ScrollRight()
+			return a, nil
+		}
 	case ":":
 		a.mode = ModeCommand
 		a.commandLine.SetWidth(a.width)
@@ -713,6 +723,10 @@ func (a App) View() string {
 		sections = append(sections, banner)
 	}
 
+	if len(a.buffers) > 1 {
+		sections = append(sections, a.renderBufferLine())
+	}
+
 	tableName := ""
 	cursorRow := 0
 	total := 0
@@ -807,6 +821,10 @@ func (a App) renderStatusBar() string {
 			hints = append(hints, keyStyle.Render("[x]")+descStyle.Render(" Rm"))
 		}
 
+		if a.fkPreview.Visible() {
+			hints = append(hints, keyStyle.Render("[H/L]")+descStyle.Render(" Scroll preview"))
+		}
+
 		hints = append(hints, keyStyle.Render("[:]")+descStyle.Render(" Cmd"))
 
 		if len(a.buffers) > 1 {
@@ -827,6 +845,37 @@ func (a App) renderStatusBar() string {
 		padding = 0
 	}
 	return bgStyle.Render(left + strings.Repeat(" ", padding) + right)
+}
+
+func (a App) renderBufferLine() string {
+	activeStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("4")).
+		Foreground(lipgloss.Color("15")).
+		Bold(true).
+		Padding(0, 1)
+
+	inactiveStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("236")).
+		Foreground(lipgloss.Color("250")).
+		Padding(0, 1)
+
+	var tabs []string
+	for i, b := range a.buffers {
+		name := b.Name
+		if len(name) > 20 {
+			name = name[:17] + "..."
+		}
+		label := fmt.Sprintf("%d:%s", i+1, name)
+		if i == a.activeBuffer {
+			tabs = append(tabs, activeStyle.Render(label))
+		} else {
+			tabs = append(tabs, inactiveStyle.Render(label))
+		}
+	}
+
+	line := strings.Join(tabs, " ")
+	bgStyle := lipgloss.NewStyle().Background(lipgloss.Color("236")).Width(a.width)
+	return bgStyle.Render(line)
 }
 
 func (a App) renderMainContent() string {

@@ -70,6 +70,14 @@ func (fp *FKPreview) Toggle() {
 	fp.visible = !fp.visible
 }
 
+func (fp *FKPreview) ScrollLeft() {
+	fp.table.MoveLeft()
+}
+
+func (fp *FKPreview) ScrollRight() {
+	fp.table.MoveRight()
+}
+
 func (fp *FKPreview) Visible() bool {
 	return fp.visible
 }
