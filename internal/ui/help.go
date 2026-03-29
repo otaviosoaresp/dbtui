@@ -112,7 +112,8 @@ func (h HelpOverlay) View() string {
 
 	lines = append(lines, sectionStyle.Render("  Command & Edit"))
 	for _, b := range []struct{ k, d string }{
-		{":", "Command mode (SQL, :run script, :bd, :bn)"},
+		{":", "Command mode (SQL, :run, :edit, :bd, :bn)"},
+		{"E", "Open SQL editor (multiline)"},
 		{"i", "Edit cell (INSERT mode, confirm with y/n)"},
 	} {
 		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))

@@ -72,6 +72,7 @@ type App struct {
 	filterInput   FilterInput
 	filterList    FilterList
 	commandLine   CommandLine
+	sqlEditor     SQLEditor
 	recordView    RecordView
 	columnPicker  ColumnPicker
 	editInput     textinput.Model
@@ -118,6 +119,7 @@ func NewApp(pool *pgxpool.Pool) App {
 		fkPreview:    fp,
 		filterInput:  NewFilterInput(),
 		commandLine:  NewCommandLine(),
+		sqlEditor:    NewSQLEditor(),
 		columnPicker: NewColumnPicker(),
 		focus:        panelTableList,
 		loading:      true,
@@ -186,6 +188,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyMsg:
+		if a.sqlEditor.Visible() {
+			var cmd tea.Cmd
+			a.sqlEditor, cmd = a.sqlEditor.Update(msg)
+			return a, cmd
+		}
 		if a.columnPicker.Visible() {
 			var cmd tea.Cmd
 			a.columnPicker, cmd = a.columnPicker.Update(msg)
@@ -256,8 +263,22 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CommandSubmitMsg:
 		return a.handleCommandSubmit(msg)
 
-	case ScriptSelectedMsg:
+	case EditorExecuteMsg:
+		a.sqlEditor.Close()
 		return a.executeRawSQL(msg.SQL)
+
+	case EditorSaveMsg:
+		if err := SaveScript(msg.Name, msg.SQL); err != nil {
+			a.statusMsg = fmt.Sprintf("Save error: %v", err)
+		} else {
+			a.statusMsg = fmt.Sprintf("Saved: %s.sql", msg.Name)
+			a.scriptList.Refresh()
+		}
+		return a, nil
+
+	case ScriptSelectedMsg:
+		a.sqlEditor.Open(msg.SQL, msg.Name, a.width, a.height-2)
+		return a, nil
 
 	case ScriptEditMsg:
 		a.scriptList.Refresh()
@@ -482,6 +503,9 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.fkPreview.ScrollRight()
 			return a, nil
 		}
+	case "E":
+		a.sqlEditor.OpenNew(a.width, a.height-2)
+		return a, nil
 	case "y":
 		if a.focus == panelDataGrid && a.dg() != nil {
 			val := a.dg().CursorCellValue()
@@ -728,6 +752,17 @@ func (a App) handleCommandSubmit(msg CommandSubmitMsg) (tea.Model, tea.Cmd) {
 	if strings.HasPrefix(command, "run ") {
 		scriptName := strings.TrimSpace(command[4:])
 		return a.executeScript(scriptName)
+	}
+
+	if strings.HasPrefix(command, "edit ") {
+		scriptName := strings.TrimSpace(command[5:])
+		a.sqlEditor.OpenScript(scriptName, a.width, a.height-2)
+		return a, nil
+	}
+
+	if command == "edit" || command == "new" {
+		a.sqlEditor.OpenNew(a.width, a.height-2)
+		return a, nil
 	}
 
 	switch command {
@@ -998,6 +1033,9 @@ func (a App) View() string {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, "Terminal too small\n(min 40 columns)")
 	}
 
+	if a.sqlEditor.Visible() {
+		return a.sqlEditor.View()
+	}
 	if a.columnPicker.Visible() {
 		return a.columnPicker.View()
 	}
