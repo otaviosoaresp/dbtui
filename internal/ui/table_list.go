@@ -97,12 +97,12 @@ func (tl TableList) updateFiltering(msg tea.Msg) (TableList, tea.Cmd) {
 			}
 			tl.stopFiltering()
 			return tl, nil
-		case "up", "ctrl+k":
+		case "up", "ctrl+p", "ctrl+k":
 			if tl.cursor > 0 {
 				tl.cursor--
 			}
 			return tl, nil
-		case "down", "ctrl+j":
+		case "down", "ctrl+n", "ctrl+j":
 			if tl.cursor < len(tl.filtered)-1 {
 				tl.cursor++
 			}
@@ -110,9 +110,12 @@ func (tl TableList) updateFiltering(msg tea.Msg) (TableList, tea.Cmd) {
 		}
 	}
 
+	prevValue := tl.filterInput.Value()
 	var cmd tea.Cmd
 	tl.filterInput, cmd = tl.filterInput.Update(msg)
-	tl.applyFilter()
+	if tl.filterInput.Value() != prevValue {
+		tl.applyFilter()
+	}
 	return tl, cmd
 }
 
@@ -146,17 +149,36 @@ func (tl TableList) updateNormal(msg tea.Msg) (TableList, tea.Cmd) {
 func (tl *TableList) applyFilter() {
 	query := tl.filterInput.Value()
 	if query == "" {
-		tl.filtered = tl.tables
-		tl.cursor = 0
+		if len(tl.filtered) != len(tl.tables) {
+			tl.filtered = tl.tables
+			tl.cursor = 0
+		}
 		return
 	}
 
 	matches := fuzzy.Find(query, tl.tables)
-	tl.filtered = make([]string, len(matches))
+	newFiltered := make([]string, len(matches))
 	for i, m := range matches {
-		tl.filtered[i] = m.Str
+		newFiltered[i] = m.Str
 	}
-	tl.cursor = 0
+
+	changed := len(newFiltered) != len(tl.filtered)
+	if !changed {
+		for i := range newFiltered {
+			if newFiltered[i] != tl.filtered[i] {
+				changed = true
+				break
+			}
+		}
+	}
+
+	tl.filtered = newFiltered
+	if changed {
+		tl.cursor = 0
+	}
+	if tl.cursor >= len(tl.filtered) && len(tl.filtered) > 0 {
+		tl.cursor = len(tl.filtered) - 1
+	}
 }
 
 func (tl TableList) View() string {

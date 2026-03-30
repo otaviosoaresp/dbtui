@@ -63,36 +63,59 @@ func (cp ColumnPicker) Update(msg tea.KeyMsg) (ColumnPicker, tea.Cmd) {
 		}
 		cp.Hide()
 		return cp, nil
-	case "up", "ctrl+k":
+	case "up", "ctrl+p", "ctrl+k":
 		if cp.cursor > 0 {
 			cp.cursor--
 		}
 		return cp, nil
-	case "down", "ctrl+j":
+	case "down", "ctrl+n", "ctrl+j":
 		if cp.cursor < len(cp.filtered)-1 {
 			cp.cursor++
 		}
 		return cp, nil
 	}
 
+	prevValue := cp.input.Value()
 	var cmd tea.Cmd
 	cp.input, cmd = cp.input.Update(msg)
-	cp.applyFilter()
+	if cp.input.Value() != prevValue {
+		cp.applyFilter()
+	}
 	return cp, cmd
 }
 
 func (cp *ColumnPicker) applyFilter() {
 	query := cp.input.Value()
 	if query == "" {
-		cp.filtered = cp.columns
-		cp.cursor = 0
+		if len(cp.filtered) != len(cp.columns) {
+			cp.filtered = cp.columns
+			cp.cursor = 0
+		}
 		return
 	}
 
 	matches := fuzzy.Find(query, cp.columns)
-	cp.filtered = make([]string, len(matches))
+	newFiltered := make([]string, len(matches))
 	for i, m := range matches {
-		cp.filtered[i] = m.Str
+		newFiltered[i] = m.Str
+	}
+
+	changed := len(newFiltered) != len(cp.filtered)
+	if !changed {
+		for i := range newFiltered {
+			if i >= len(cp.filtered) || newFiltered[i] != cp.filtered[i] {
+				changed = true
+				break
+			}
+		}
+	}
+
+	cp.filtered = newFiltered
+	if changed {
+		cp.cursor = 0
+	}
+	if cp.cursor >= len(cp.filtered) && len(cp.filtered) > 0 {
+		cp.cursor = len(cp.filtered) - 1
 	}
 	cp.cursor = 0
 }
