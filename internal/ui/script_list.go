@@ -13,13 +13,15 @@ import (
 )
 
 type ScriptList struct {
-	scripts    []string
-	cursor     int
-	width      int
-	height     int
-	focused    bool
-	creating   bool
-	nameInput  textinput.Model
+	scripts       []string
+	cursor        int
+	width         int
+	height        int
+	focused       bool
+	creating      bool
+	nameInput     textinput.Model
+	deleteConfirm bool
+	deleteTarget  string
 }
 
 func NewScriptList() ScriptList {
@@ -47,6 +49,7 @@ func (sl *ScriptList) Focus() {
 func (sl *ScriptList) Blur() {
 	sl.focused = false
 	sl.creating = false
+	sl.deleteConfirm = false
 }
 
 func (sl *ScriptList) Focused() bool {
@@ -57,18 +60,34 @@ func (sl *ScriptList) IsCreating() bool {
 	return sl.creating
 }
 
+func (sl *ScriptList) IsDeleting() bool {
+	return sl.deleteConfirm
+}
+
+func (sl *ScriptList) DeleteTarget() string {
+	return sl.deleteTarget
+}
+
 type ScriptSelectedMsg struct {
 	Name string
 	SQL  string
 }
 
-type ScriptEditMsg struct {
+type ScriptRunMsg struct {
+	Name string
+}
+
+type ScriptOpenExternalMsg struct {
 	Name string
 }
 
 func (sl ScriptList) Update(msg tea.Msg) (ScriptList, tea.Cmd) {
 	if sl.creating {
 		return sl.updateCreating(msg)
+	}
+
+	if sl.deleteConfirm {
+		return sl.updateDeleting(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -85,6 +104,13 @@ func (sl ScriptList) Update(msg tea.Msg) (ScriptList, tea.Cmd) {
 		case "enter":
 			if sl.cursor < len(sl.scripts) {
 				name := sl.scripts[sl.cursor]
+				return sl, func() tea.Msg {
+					return ScriptRunMsg{Name: name}
+				}
+			}
+		case "e":
+			if sl.cursor < len(sl.scripts) {
+				name := sl.scripts[sl.cursor]
 				sql, err := config.LoadScript(name)
 				if err == nil {
 					return sl, func() tea.Msg {
@@ -92,28 +118,24 @@ func (sl ScriptList) Update(msg tea.Msg) (ScriptList, tea.Cmd) {
 					}
 				}
 			}
+		case "O":
+			if sl.cursor < len(sl.scripts) {
+				name := sl.scripts[sl.cursor]
+				return sl, func() tea.Msg {
+					return ScriptOpenExternalMsg{Name: name}
+				}
+			}
 		case "a":
 			sl.creating = true
 			sl.nameInput.SetValue("")
 			sl.nameInput.Focus()
 			return sl, nil
-		case "e":
-			if sl.cursor < len(sl.scripts) {
-				name := sl.scripts[sl.cursor]
-				return sl, func() tea.Msg {
-					return ScriptEditMsg{Name: name}
-				}
-			}
 		case "d":
 			if sl.cursor < len(sl.scripts) {
-				name := sl.scripts[sl.cursor]
-				dir, _ := config.ScriptsDir()
-				os.Remove(fmt.Sprintf("%s/%s.sql", dir, name))
-				sl.Refresh()
-				if sl.cursor >= len(sl.scripts) && sl.cursor > 0 {
-					sl.cursor--
-				}
+				sl.deleteConfirm = true
+				sl.deleteTarget = sl.scripts[sl.cursor]
 			}
+			return sl, nil
 		case "g":
 			sl.cursor = 0
 		case "G":
@@ -140,11 +162,16 @@ func (sl ScriptList) updateCreating(msg tea.Msg) (ScriptList, tea.Cmd) {
 				if err == nil {
 					os.MkdirAll(dir, 0700)
 					path := fmt.Sprintf("%s/%s.sql", dir, name)
-					os.WriteFile(path, []byte("-- "+name+"\nSELECT 1;\n"), 0600)
+					os.WriteFile(path, []byte("-- "+name+"\n"), 0600)
 					sl.Refresh()
 
-					return sl, func() tea.Msg {
-						return ScriptEditMsg{Name: name}
+					sql, loadErr := config.LoadScript(name)
+					if loadErr == nil {
+						sl.creating = false
+						sl.nameInput.Blur()
+						return sl, func() tea.Msg {
+							return ScriptSelectedMsg{Name: name, SQL: sql}
+						}
 					}
 				}
 			}
@@ -159,25 +186,25 @@ func (sl ScriptList) updateCreating(msg tea.Msg) (ScriptList, tea.Cmd) {
 	return sl, cmd
 }
 
-func OpenInEditor(name string) tea.Cmd {
-	dir, err := config.ScriptsDir()
-	if err != nil {
-		return nil
+func (sl ScriptList) updateDeleting(msg tea.Msg) (ScriptList, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "y", "Y":
+			dir, _ := config.ScriptsDir()
+			os.Remove(fmt.Sprintf("%s/%s.sql", dir, sl.deleteTarget))
+			sl.deleteConfirm = false
+			sl.deleteTarget = ""
+			sl.Refresh()
+			if sl.cursor >= len(sl.scripts) && sl.cursor > 0 {
+				sl.cursor--
+			}
+		case "n", "N", "esc":
+			sl.deleteConfirm = false
+			sl.deleteTarget = ""
+		}
 	}
-	path := fmt.Sprintf("%s/%s.sql", dir, name)
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vim"
-	}
-	c := exec.Command(editor, path)
-	return tea.ExecProcess(c, func(err error) tea.Msg {
-		return ScriptEditDoneMsg{Name: name, Err: err}
-	})
-}
-
-type ScriptEditDoneMsg struct {
-	Name string
-	Err  error
+	return sl, nil
 }
 
 func (sl ScriptList) View() string {
@@ -253,6 +280,27 @@ func (sl ScriptList) View() string {
 		Height(contentHeight + boolToIntSL(sl.creating))
 
 	return style.Render(b.String())
+}
+
+type ScriptEditDoneMsg struct {
+	Name string
+	Err  error
+}
+
+func OpenInEditor(name string) tea.Cmd {
+	dir, err := config.ScriptsDir()
+	if err != nil {
+		return nil
+	}
+	path := fmt.Sprintf("%s/%s.sql", dir, name)
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vim"
+	}
+	c := exec.Command(editor, path)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return ScriptEditDoneMsg{Name: name, Err: err}
+	})
 }
 
 func boolToIntSL(b bool) int {

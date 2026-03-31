@@ -275,9 +275,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CommandSubmitMsg:
 		return a.handleCommandSubmit(msg)
 
-	case EditorExecuteMsg:
-		a.sqlEditor.Close()
-		return a.executeRawSQL(msg.SQL)
+	case EditorQueryResultMsg:
+		a.sqlEditor.applyResult(msg.Result, msg.Err)
+		if msg.Err != nil {
+			a.statusMsg = fmt.Sprintf("Query error: %v", msg.Err)
+		} else {
+			a.statusMsg = fmt.Sprintf("Query: %d rows", msg.Result.Total)
+		}
+		return a, nil
 
 	case EditorSaveMsg:
 		if err := SaveScript(msg.Name, msg.SQL); err != nil {
@@ -289,10 +294,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case ScriptSelectedMsg:
-		a.sqlEditor.Open(msg.SQL, msg.Name, a.width, a.height-2)
+		a.sqlEditor.Open(msg.SQL, msg.Name, a.pool, a.width, a.height-2)
 		return a, nil
 
-	case ScriptEditMsg:
+	case ScriptRunMsg:
+		return a.executeScript(msg.Name)
+
+	case ScriptOpenExternalMsg:
 		a.scriptList.Refresh()
 		return a, OpenInEditor(msg.Name)
 
@@ -616,7 +624,7 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 	case "E":
-		a.sqlEditor.OpenNew(a.width, a.height-2)
+		a.sqlEditor.OpenNew(a.pool, a.width, a.height-2)
 		return a, nil
 	case "y":
 		if a.focus == panelDataGrid && a.dg() != nil {
@@ -987,12 +995,12 @@ func (a App) handleCommandSubmit(msg CommandSubmitMsg) (tea.Model, tea.Cmd) {
 
 	if strings.HasPrefix(command, "edit ") {
 		scriptName := strings.TrimSpace(command[5:])
-		a.sqlEditor.OpenScript(scriptName, a.width, a.height-2)
+		a.sqlEditor.OpenScript(scriptName, a.pool, a.width, a.height-2)
 		return a, nil
 	}
 
 	if command == "edit" || command == "new" {
-		a.sqlEditor.OpenNew(a.width, a.height-2)
+		a.sqlEditor.OpenNew(a.pool, a.width, a.height-2)
 		return a, nil
 	}
 
@@ -1044,6 +1052,11 @@ func (a App) executeScript(name string) (tea.Model, tea.Cmd) {
 	sql, err := config.LoadScript(name)
 	if err != nil {
 		a.statusMsg = fmt.Sprintf("Error: %v", err)
+		return a, nil
+	}
+	if len(extractTemplateVars(sql)) > 0 {
+		a.sqlEditor.Open(sql, name, a.pool, a.width, a.height-2)
+		a.statusMsg = "Script has template variables -- fill values and Ctrl+E to execute"
 		return a, nil
 	}
 	a.statusMsg = fmt.Sprintf("Running script: %s", name)
@@ -1385,6 +1398,12 @@ func (a App) renderStatusBar() string {
 		hints = append(hints, modeStyle.Render(fmt.Sprintf(" -- %s -- %d selected ", visualLabel, count)))
 		hints = append(hints, keyStyle.Render("[D]")+descStyle.Render(" Delete"), keyStyle.Render("[Y]")+descStyle.Render(" Copy"), keyStyle.Render("[m]")+descStyle.Render(" Mark"), keyStyle.Render("[Esc]")+descStyle.Render(" Clear"))
 		return bgStyle.Render(lipgloss.JoinHorizontal(lipgloss.Left, strings.Join(hints, " ")))
+	}
+
+	if a.scriptList.IsDeleting() {
+		hints = append(hints, modeStyle.Render(" -- DELETE SCRIPT -- "))
+		hints = append(hints, keyStyle.Render("[y]")+descStyle.Render(" Confirm"), keyStyle.Render("[n]")+descStyle.Render(" Cancel"))
+		return bgStyle.Render(lipgloss.JoinHorizontal(lipgloss.Left, strings.Join(hints, " ")+" "+descStyle.Render(fmt.Sprintf("Delete %s.sql?", a.scriptList.DeleteTarget()))))
 	}
 
 	if a.mode != ModeNormal {

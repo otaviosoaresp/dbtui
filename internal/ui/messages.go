@@ -78,3 +78,8 @@ type DeleteResultMsg struct {
 	RowsAffected int64
 	Err          error
 }
+
+type EditorQueryResultMsg struct {
+	Result db.QueryResult
+	Err    error
+}

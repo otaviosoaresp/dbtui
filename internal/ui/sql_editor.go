@@ -1,25 +1,49 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/otaviosoaresp/dbtui/internal/config"
+	"github.com/otaviosoaresp/dbtui/internal/db"
+	"github.com/otaviosoaresp/dbtui/internal/ui/widgets"
 )
 
+var templateVarRegex = regexp.MustCompile(`\$\{(\w+)\}`)
+
+type templateVar struct {
+	Name  string
+	Input textinput.Model
+}
+
 type SQLEditor struct {
-	editor     textarea.Model
-	visible    bool
-	scriptName string
-	width      int
-	height     int
-	modified   bool
-	saving     bool
-	saveInput  string
+	editor      textarea.Model
+	pool        *pgxpool.Pool
+	visible     bool
+	scriptName  string
+	width       int
+	height      int
+	modified    bool
+	saving      bool
+	saveInput   string
+	result      *db.QueryResult
+	resultTable widgets.Table
+	resultErr   error
+	showResult  bool
+	focusResult bool
+	executing   bool
+	templateVars []templateVar
+	activeVar    int
+	editingVars  bool
+	pendingSQL   string
 }
 
 func NewSQLEditor() SQLEditor {
@@ -27,48 +51,58 @@ func NewSQLEditor() SQLEditor {
 	ta.Placeholder = "Write your SQL query here...\n\nCtrl+E to execute | Ctrl+S to save | Esc to close"
 	ta.ShowLineNumbers = true
 	ta.CharLimit = 10000
-	return SQLEditor{editor: ta}
+	return SQLEditor{
+		editor:      ta,
+		resultTable: widgets.NewTable(widgets.DefaultConfig()),
+	}
 }
 
-func (se *SQLEditor) Open(sql, scriptName string, width, height int) {
+func (se *SQLEditor) Open(sql, scriptName string, pool *pgxpool.Pool, width, height int) {
+	se.pool = pool
 	se.width = width
 	se.height = height
 	se.scriptName = scriptName
 	se.visible = true
 	se.modified = false
 	se.saving = false
+	se.showResult = false
+	se.focusResult = false
+	se.executing = false
+	se.result = nil
+	se.resultErr = nil
 
+	editorHeight := se.editorHeight()
 	se.editor.SetWidth(width - 6)
-	se.editor.SetHeight(height - 6)
+	se.editor.SetHeight(editorHeight)
 	se.editor.SetValue(sql)
 	se.editor.Focus()
 }
 
-func (se *SQLEditor) OpenNew(width, height int) {
-	se.Open("", "", width, height)
+func (se *SQLEditor) OpenNew(pool *pgxpool.Pool, width, height int) {
+	se.Open("", "", pool, width, height)
 }
 
-func (se *SQLEditor) OpenScript(name string, width, height int) {
+func (se *SQLEditor) OpenScript(name string, pool *pgxpool.Pool, width, height int) {
 	sql, err := config.LoadScript(name)
 	if err != nil {
-		se.Open("-- Error loading "+name+": "+err.Error(), "", width, height)
+		se.Open("-- Error loading "+name+": "+err.Error(), "", pool, width, height)
 		return
 	}
-	se.Open(sql, name, width, height)
+	se.Open(sql, name, pool, width, height)
 }
 
 func (se *SQLEditor) Close() {
 	se.visible = false
 	se.saving = false
+	se.showResult = false
+	se.focusResult = false
+	se.result = nil
+	se.resultErr = nil
 	se.editor.Blur()
 }
 
 func (se *SQLEditor) Visible() bool {
 	return se.visible
-}
-
-func (se *SQLEditor) Value() string {
-	return se.editor.Value()
 }
 
 func (se *SQLEditor) ScriptName() string {
@@ -78,12 +112,109 @@ func (se *SQLEditor) ScriptName() string {
 func (se *SQLEditor) SetSize(width, height int) {
 	se.width = width
 	se.height = height
+	editorHeight := se.editorHeight()
 	se.editor.SetWidth(width - 6)
-	se.editor.SetHeight(height - 6)
+	se.editor.SetHeight(editorHeight)
+	if se.showResult {
+		rw, rh := se.resultDimensions()
+		se.resultTable.SetSize(rw, rh)
+	}
 }
 
-type EditorExecuteMsg struct {
-	SQL string
+func (se *SQLEditor) editorHeight() int {
+	available := se.height - 4
+	if se.showResult || se.editingVars {
+		return available / 2
+	}
+	return available
+}
+
+func (se *SQLEditor) resultDimensions() (int, int) {
+	available := se.height - 4
+	editorH := available / 2
+	resultH := available - editorH - 2
+	if resultH < 3 {
+		resultH = 3
+	}
+	resultW := se.width - 6
+	return resultW, resultH
+}
+
+func (se *SQLEditor) applyResult(result db.QueryResult, err error) {
+	se.executing = false
+	se.resultErr = err
+	if err != nil {
+		se.result = nil
+		se.showResult = true
+		se.resizeAfterResult()
+		return
+	}
+	se.result = &result
+	se.showResult = true
+	rw, rh := se.resultDimensions()
+	se.resultTable = widgets.NewTable(widgets.DefaultConfig())
+	se.resultTable.SetSize(rw, rh)
+	se.resultTable.SetData(result.Columns, result.Rows)
+	se.resizeAfterResult()
+}
+
+func (se *SQLEditor) resizeAfterResult() {
+	editorHeight := se.editorHeight()
+	se.editor.SetHeight(editorHeight)
+}
+
+func extractTemplateVars(sql string) []string {
+	matches := templateVarRegex.FindAllStringSubmatch(sql, -1)
+	seen := make(map[string]bool)
+	var names []string
+	for _, m := range matches {
+		name := m[1]
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func substituteTemplateVars(sql string, vars []templateVar) string {
+	result := sql
+	for _, v := range vars {
+		placeholder := "${" + v.Name + "}"
+		result = strings.ReplaceAll(result, placeholder, v.Input.Value())
+	}
+	return result
+}
+
+func (se *SQLEditor) startVarInput(sql string, varNames []string) {
+	se.pendingSQL = sql
+	se.templateVars = make([]templateVar, len(varNames))
+	for i, name := range varNames {
+		ti := textinput.New()
+		ti.Placeholder = name
+		ti.CharLimit = 500
+		ti.Width = 40
+		se.templateVars[i] = templateVar{Name: name, Input: ti}
+	}
+	se.activeVar = 0
+	se.editingVars = true
+	se.templateVars[0].Input.Focus()
+	se.editor.Blur()
+	se.editor.SetHeight(se.editorHeight())
+}
+
+func (se *SQLEditor) executeWithVars() tea.Cmd {
+	sql := substituteTemplateVars(se.pendingSQL, se.templateVars)
+	se.editingVars = false
+	se.templateVars = nil
+	se.pendingSQL = ""
+	se.executing = true
+	se.editor.Focus()
+	pool := se.pool
+	return func() tea.Msg {
+		result, err := db.ExecuteRawQuery(context.Background(), pool, sql)
+		return EditorQueryResultMsg{Result: result, Err: err}
+	}
 }
 
 type EditorSaveMsg struct {
@@ -92,8 +223,16 @@ type EditorSaveMsg struct {
 }
 
 func (se SQLEditor) Update(msg tea.KeyMsg) (SQLEditor, tea.Cmd) {
+	if se.editingVars {
+		return se.updateVarInput(msg)
+	}
+
 	if se.saving {
 		return se.updateSaving(msg)
+	}
+
+	if se.focusResult {
+		return se.updateResultFocus(msg)
 	}
 
 	switch msg.String() {
@@ -102,12 +241,20 @@ func (se SQLEditor) Update(msg tea.KeyMsg) (SQLEditor, tea.Cmd) {
 		return se, nil
 	case "ctrl+e":
 		sql := strings.TrimSpace(se.editor.Value())
-		if sql != "" {
-			return se, func() tea.Msg {
-				return EditorExecuteMsg{SQL: sql}
-			}
+		if sql == "" || se.pool == nil {
+			return se, nil
 		}
-		return se, nil
+		varNames := extractTemplateVars(sql)
+		if len(varNames) > 0 {
+			se.startVarInput(sql, varNames)
+			return se, nil
+		}
+		se.executing = true
+		pool := se.pool
+		return se, func() tea.Msg {
+			result, err := db.ExecuteRawQuery(context.Background(), pool, sql)
+			return EditorQueryResultMsg{Result: result, Err: err}
+		}
 	case "ctrl+s":
 		se.saving = true
 		if se.scriptName != "" {
@@ -116,11 +263,104 @@ func (se SQLEditor) Update(msg tea.KeyMsg) (SQLEditor, tea.Cmd) {
 			se.saveInput = ""
 		}
 		return se, nil
+	case "tab":
+		if se.showResult {
+			se.focusResult = true
+			se.editor.Blur()
+			return se, nil
+		}
 	}
 
 	var cmd tea.Cmd
 	se.editor, cmd = se.editor.Update(msg)
 	se.modified = true
+	return se, cmd
+}
+
+func (se SQLEditor) updateResultFocus(msg tea.KeyMsg) (SQLEditor, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		se.Close()
+		return se, nil
+	case "tab":
+		se.focusResult = false
+		se.editor.Focus()
+		return se, nil
+	case "ctrl+e":
+		sql := strings.TrimSpace(se.editor.Value())
+		if sql == "" || se.pool == nil {
+			return se, nil
+		}
+		varNames := extractTemplateVars(sql)
+		if len(varNames) > 0 {
+			se.focusResult = false
+			se.startVarInput(sql, varNames)
+			return se, nil
+		}
+		se.executing = true
+		pool := se.pool
+		return se, func() tea.Msg {
+			result, err := db.ExecuteRawQuery(context.Background(), pool, sql)
+			return EditorQueryResultMsg{Result: result, Err: err}
+		}
+	case "j", "down":
+		se.resultTable.MoveDown()
+	case "k", "up":
+		se.resultTable.MoveUp()
+	case "h", "left":
+		se.resultTable.MoveLeft()
+	case "l", "right":
+		se.resultTable.MoveRight()
+	case "g":
+		se.resultTable.MoveToTop()
+	case "G":
+		se.resultTable.MoveToBottom()
+	case "d":
+		se.resultTable.PageDown()
+	case "u":
+		se.resultTable.PageUp()
+	case "0":
+		se.resultTable.MoveToFirstCol()
+	case "$":
+		se.resultTable.MoveToLastCol()
+	}
+	return se, nil
+}
+
+func (se SQLEditor) updateVarInput(msg tea.KeyMsg) (SQLEditor, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		se.editingVars = false
+		se.templateVars = nil
+		se.pendingSQL = ""
+		se.editor.Focus()
+		return se, nil
+	case "tab", "down":
+		if se.activeVar < len(se.templateVars)-1 {
+			se.templateVars[se.activeVar].Input.Blur()
+			se.activeVar++
+			se.templateVars[se.activeVar].Input.Focus()
+		}
+		return se, nil
+	case "shift+tab", "up":
+		if se.activeVar > 0 {
+			se.templateVars[se.activeVar].Input.Blur()
+			se.activeVar--
+			se.templateVars[se.activeVar].Input.Focus()
+		}
+		return se, nil
+	case "enter":
+		if se.activeVar < len(se.templateVars)-1 {
+			se.templateVars[se.activeVar].Input.Blur()
+			se.activeVar++
+			se.templateVars[se.activeVar].Input.Focus()
+			return se, nil
+		}
+		return se, se.executeWithVars()
+	}
+
+	var cmd tea.Cmd
+	se.templateVars[se.activeVar].Input, cmd = se.templateVars[se.activeVar].Input.Update(msg)
 	return se, cmd
 }
 
@@ -171,19 +411,43 @@ func (se SQLEditor) View() string {
 	if se.modified {
 		title += " [modified]"
 	}
-
-	var footer string
-	if se.saving {
-		footer = saveStyle.Render("Save as: ") + se.saveInput + "_"
-	} else {
-		footer = dimStyle.Render("[Ctrl+E] Execute  [Ctrl+S] Save  [Esc] Close")
+	if se.executing {
+		title += " [executing...]"
 	}
 
 	header := titleStyle.Render("  " + title)
-
 	editorView := se.editor.View()
 
-	content := lipgloss.JoinVertical(lipgloss.Left, header, "", editorView, "", footer)
+	var sections []string
+	sections = append(sections, header, "", editorView)
+
+	if se.editingVars {
+		sections = append(sections, "", se.renderVarPanel())
+	} else if se.showResult {
+		sections = append(sections, "", se.renderResultPanel())
+	}
+
+	var footer string
+	if se.editingVars {
+		footer = dimStyle.Render("[Tab/Shift+Tab] Nav  [Enter] Next/Execute  [Esc] Cancel")
+	} else if se.saving {
+		footer = saveStyle.Render("Save as: ") + se.saveInput + "_"
+	} else {
+		var hints []string
+		hints = append(hints, "[Ctrl+E] Execute", "[Ctrl+S] Save")
+		if se.showResult {
+			focusLabel := "[Tab] Result"
+			if se.focusResult {
+				focusLabel = "[Tab] Editor"
+			}
+			hints = append(hints, focusLabel)
+		}
+		hints = append(hints, "[Esc] Close")
+		footer = dimStyle.Render(strings.Join(hints, "  "))
+	}
+
+	sections = append(sections, "", footer)
+	content := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -192,6 +456,80 @@ func (se SQLEditor) View() string {
 		Height(se.height - 2).
 		Padding(0, 1)
 
+	return style.Render(content)
+}
+
+func (se SQLEditor) renderResultPanel() string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
+	errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	borderColor := lipgloss.Color("240")
+	if se.focusResult {
+		borderColor = lipgloss.Color("5")
+	}
+
+	if se.resultErr != nil {
+		errMsg := errStyle.Render(fmt.Sprintf("  Error: %v", se.resultErr))
+		_, rh := se.resultDimensions()
+		style := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("1")).
+			Width(se.width - 8).
+			Height(rh)
+		return style.Render(errMsg)
+	}
+
+	if se.result == nil {
+		return ""
+	}
+
+	resultTitle := titleStyle.Render(fmt.Sprintf("  Result (%d rows)", se.result.Total))
+	tableView := se.resultTable.View()
+
+	_, rh := se.resultDimensions()
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Width(se.width - 8).
+		Height(rh)
+
+	return style.Render(lipgloss.JoinVertical(lipgloss.Left, resultTitle, tableView))
+}
+
+func (se SQLEditor) renderVarPanel() string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
+	activeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+
+	var lines []string
+	lines = append(lines, titleStyle.Render("  Template Variables"))
+	lines = append(lines, "")
+
+	for i, v := range se.templateVars {
+		var label string
+		if i == se.activeVar {
+			label = activeStyle.Render(fmt.Sprintf("  > ${%s}: ", v.Name))
+		} else {
+			label = labelStyle.Render(fmt.Sprintf("    ${%s}: ", v.Name))
+		}
+		if i == se.activeVar {
+			lines = append(lines, label+v.Input.View())
+		} else {
+			val := v.Input.Value()
+			if val == "" {
+				val = dimStyle.Render("(empty)")
+			}
+			lines = append(lines, label+val)
+		}
+	}
+
+	content := strings.Join(lines, "\n")
+	_, rh := se.resultDimensions()
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("3")).
+		Width(se.width - 8).
+		Height(rh)
 	return style.Render(content)
 }
 

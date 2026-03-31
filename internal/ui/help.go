@@ -105,8 +105,10 @@ func (h HelpOverlay) View() string {
 	lines = append(lines, sectionStyle.Render("  Scripts"))
 	for _, b := range []struct{ k, d string }{
 		{"S", "Switch to Scripts panel"},
+		{"Enter", "Execute script (in Scripts panel)"},
+		{"e", "Edit script in SQL editor (in Scripts panel)"},
+		{"O", "Open script in $EDITOR (in Scripts panel)"},
 		{"a", "Create new script (in Scripts panel)"},
-		{"e", "Edit script in $EDITOR (in Scripts panel)"},
 		{"d", "Delete script (in Scripts panel)"},
 	} {
 		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))

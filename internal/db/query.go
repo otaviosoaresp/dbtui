@@ -202,7 +202,8 @@ func ExecuteRawQuery(ctx context.Context, pool *pgxpool.Pool, sql string) (Query
 	defer cancel()
 
 	trimmed := strings.TrimSpace(sql)
-	upper := strings.ToUpper(trimmed)
+	stripped := stripSQLComments(trimmed)
+	upper := strings.ToUpper(stripped)
 
 	isSelect := strings.HasPrefix(upper, "SELECT") ||
 		strings.HasPrefix(upper, "WITH") ||
@@ -522,6 +523,18 @@ func formatNumericStruct(v any) string {
 		multiplier *= 10
 	}
 	return fmt.Sprintf("%d", num*multiplier)
+}
+
+func stripSQLComments(sql string) string {
+	lines := strings.Split(sql, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+		return trimmed
+	}
+	return sql
 }
 
 func quoteIdent(name string) string {
