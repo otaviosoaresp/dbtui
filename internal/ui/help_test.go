@@ -45,7 +45,7 @@ func TestHelpOverlay_View_Hidden(t *testing.T) {
 
 func TestHelpOverlay_View_Visible(t *testing.T) {
 	var h HelpOverlay
-	h.SetSize(80, 24)
+	h.SetSize(100, 80)
 	h.Toggle()
 
 	view := h.View()

@@ -227,6 +227,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.help.Visible() {
 			if msg.String() == "?" || msg.String() == "esc" || msg.String() == "q" {
 				a.help.Hide()
+			} else {
+				a.help = a.help.Update(msg)
 			}
 			return a, nil
 		}
