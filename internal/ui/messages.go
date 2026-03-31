@@ -68,3 +68,13 @@ type RawQueryResultMsg struct {
 type CommandSubmitMsg struct {
 	Command string
 }
+
+type InsertResultMsg struct {
+	RowsAffected int64
+	Err          error
+}
+
+type DeleteResultMsg struct {
+	RowsAffected int64
+	Err          error
+}

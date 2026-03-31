@@ -58,6 +58,8 @@ func (h HelpOverlay) View() string {
 		{"S", "Switch left panel (Tables / Scripts)"},
 		{"] / [", "Next / previous buffer"},
 		{"c", "Fuzzy jump to column"},
+		{"V", "Visual mode (range select)"},
+		{"m", "Toggle mark on current row"},
 	} {
 		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
 	}
@@ -115,6 +117,9 @@ func (h HelpOverlay) View() string {
 		{":", "Command mode (SQL, :run, :edit, :bd, :bn)"},
 		{"E", "Open SQL editor (multiline)"},
 		{"i", "Edit cell (INSERT mode, confirm with y/n)"},
+		{"D", "Delete current row"},
+		{"a", "Add new row (form)"},
+		{"A", "Duplicate current row (form)"},
 	} {
 		lines = append(lines, "  "+keyStyle.Render(b.k)+descStyle.Render(b.d))
 	}

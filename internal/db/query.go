@@ -312,6 +312,134 @@ func ExecuteUpdate(ctx context.Context, pool *pgxpool.Pool, table, column, newVa
 	return tag.RowsAffected(), nil
 }
 
+func ExecuteDelete(ctx context.Context, pool *pgxpool.Pool, table string, pkColumns []string, pkValues []string) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	conditions := make([]string, len(pkColumns))
+	args := make([]any, len(pkValues))
+	for i := range pkColumns {
+		conditions[i] = fmt.Sprintf("%s = $%d", quoteIdent(pkColumns[i]), i+1)
+		args[i] = pkValues[i]
+	}
+
+	query := fmt.Sprintf(
+		"DELETE FROM %s WHERE %s",
+		quoteIdent(table),
+		strings.Join(conditions, " AND "),
+	)
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("executing delete: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return tag.RowsAffected(), nil
+}
+
+func ExecuteDeleteBatch(ctx context.Context, pool *pgxpool.Pool, table string, pkColumns []string, pkValueSets [][]string) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	conditions := make([]string, len(pkColumns))
+	for i := range pkColumns {
+		conditions[i] = fmt.Sprintf("%s = $%d", quoteIdent(pkColumns[i]), i+1)
+	}
+	query := fmt.Sprintf(
+		"DELETE FROM %s WHERE %s",
+		quoteIdent(table),
+		strings.Join(conditions, " AND "),
+	)
+
+	var totalAffected int64
+	for _, pkValues := range pkValueSets {
+		args := make([]any, len(pkValues))
+		for i, v := range pkValues {
+			args[i] = v
+		}
+		tag, err := tx.Exec(ctx, query, args...)
+		if err != nil {
+			return 0, fmt.Errorf("executing delete: %w", err)
+		}
+		totalAffected += tag.RowsAffected()
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return totalAffected, nil
+}
+
+func ExecuteInsert(ctx context.Context, pool *pgxpool.Pool, table string, columns []string, values []string) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var filteredCols []string
+	var args []any
+
+	for i, col := range columns {
+		val := ""
+		if i < len(values) {
+			val = values[i]
+		}
+		if val == "" {
+			continue
+		}
+		filteredCols = append(filteredCols, quoteIdent(col))
+		args = append(args, val)
+	}
+
+	if len(filteredCols) == 0 {
+		return 0, fmt.Errorf("no values provided for insert")
+	}
+
+	placeholders := make([]string, len(filteredCols))
+	for i := range filteredCols {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+
+	query := fmt.Sprintf(
+		"INSERT INTO %s (%s) VALUES (%s)",
+		quoteIdent(table),
+		strings.Join(filteredCols, ", "),
+		strings.Join(placeholders, ", "),
+	)
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("executing insert: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return tag.RowsAffected(), nil
+}
+
 func formatValue(v any) string {
 	if v == nil {
 		return "NULL"

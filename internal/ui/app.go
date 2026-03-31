@@ -80,6 +80,10 @@ type App struct {
 	editOriginal  string
 	editConfirm   bool
 	editSQL       string
+	deleteConfirm bool
+	deletePKs     []PKValue
+	deleteTable   string
+	rowForm       RowForm
 	focus         focusedPanel
 	mode          AppMode
 	width         int
@@ -188,6 +192,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyMsg:
+		if a.rowForm.Visible() {
+			if a.rowForm.Confirm() {
+				return a.handleRowFormConfirm(msg)
+			}
+			var cmd tea.Cmd
+			a.rowForm, cmd = a.rowForm.Update(msg)
+			return a, cmd
+		}
 		if a.sqlEditor.Visible() {
 			var cmd tea.Cmd
 			a.sqlEditor, cmd = a.sqlEditor.Update(msg)
@@ -303,6 +315,31 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return a, nil
+
+	case DeleteResultMsg:
+		if a.dg() != nil {
+			a.dg().ClearSelection()
+		}
+		if msg.Err != nil {
+			a.statusMsg = fmt.Sprintf("Delete error: %v", msg.Err)
+		} else {
+			a.statusMsg = fmt.Sprintf("Deleted %d row(s)", msg.RowsAffected)
+			if a.dg() != nil {
+				return a, a.dg().Reload()
+			}
+		}
+		return a, nil
+
+	case InsertResultMsg:
+		if msg.Err != nil {
+			a.statusMsg = fmt.Sprintf("Insert error: %v", msg.Err)
+		} else {
+			a.statusMsg = fmt.Sprintf("Inserted %d row(s)", msg.RowsAffected)
+			if a.dg() != nil {
+				return a, a.dg().Reload()
+			}
+		}
+		return a, nil
 	}
 
 	return a.routeToFocused(msg)
@@ -388,11 +425,86 @@ func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, cmd
 	}
 
+	if a.deleteConfirm {
+		return a.handleDeleteConfirm(msg)
+	}
+
 	if a.mode != ModeNormal {
 		return a.handleModalKeyPress(msg)
 	}
 
 	return a.handleNormalMode(msg)
+}
+
+func (a App) handleDeleteConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		a.deleteConfirm = false
+		pool := a.pool
+		table := a.deleteTable
+		deletePKs := a.deletePKs
+
+		if len(deletePKs) == 1 {
+			pk := deletePKs[0]
+			pkCols := make([]string, len(pk))
+			pkVals := make([]string, len(pk))
+			for i, p := range pk {
+				pkCols[i] = p.Column
+				pkVals[i] = p.Value
+			}
+			a.statusMsg = "Deleting..."
+			return a, func() tea.Msg {
+				rows, err := db.ExecuteDelete(context.Background(), pool, table, pkCols, pkVals)
+				return DeleteResultMsg{RowsAffected: rows, Err: err}
+			}
+		}
+
+		pkCols := make([]string, len(deletePKs[0]))
+		for i, p := range deletePKs[0] {
+			pkCols[i] = p.Column
+		}
+		pkValueSets := make([][]string, len(deletePKs))
+		for i, pk := range deletePKs {
+			vals := make([]string, len(pk))
+			for j, p := range pk {
+				vals[j] = p.Value
+			}
+			pkValueSets[i] = vals
+		}
+		a.statusMsg = fmt.Sprintf("Deleting %d rows...", len(deletePKs))
+		return a, func() tea.Msg {
+			rows, err := db.ExecuteDeleteBatch(context.Background(), pool, table, pkCols, pkValueSets)
+			return DeleteResultMsg{RowsAffected: rows, Err: err}
+		}
+	case "n", "N", "esc":
+		a.deleteConfirm = false
+		a.statusMsg = "Delete cancelled"
+		return a, nil
+	}
+	return a, nil
+}
+
+func (a App) handleRowFormConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		columns, values := a.rowForm.CollectValues()
+		table := a.rowForm.TableName()
+		a.rowForm.Hide()
+		pool := a.pool
+		a.statusMsg = "Inserting..."
+		return a, func() tea.Msg {
+			rows, err := db.ExecuteInsert(context.Background(), pool, table, columns, values)
+			return InsertResultMsg{RowsAffected: rows, Err: err}
+		}
+	case "n", "N":
+		a.rowForm.ResetConfirm()
+		return a, nil
+	case "esc":
+		a.rowForm.Hide()
+		a.statusMsg = "Insert cancelled"
+		return a, nil
+	}
+	return a, nil
 }
 
 func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -517,6 +629,16 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "Y":
 		if a.focus == panelDataGrid && a.dg() != nil {
+			if a.dg().HasSelection() {
+				selectedValues := a.dg().SelectedRowValues()
+				var lines []string
+				for _, row := range selectedValues {
+					lines = append(lines, strings.Join(row, "\t"))
+				}
+				clipboard.WriteAll(strings.Join(lines, "\n"))
+				a.statusMsg = fmt.Sprintf("Copied %d rows", len(selectedValues))
+				return a, nil
+			}
 			values := a.dg().CursorRowValues()
 			if len(values) > 0 {
 				clipboard.WriteAll(strings.Join(values, "\t"))
@@ -592,6 +714,115 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			ti.Focus()
 			a.editInput = ti
+			return a, nil
+		}
+	case "V":
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" {
+			if a.dg().IsVisualActive() {
+				a.dg().StopVisual()
+				a.statusMsg = ""
+			} else {
+				a.dg().StartVisual()
+				a.statusMsg = "-- VISUAL --"
+			}
+			return a, nil
+		}
+	case "m":
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" {
+			a.dg().ToggleMarkRow()
+			a.dg().MoveDownRow()
+			selected := a.dg().SelectedRows()
+			a.statusMsg = fmt.Sprintf("%d row(s) selected", len(selected))
+			return a, nil
+		}
+	case "esc":
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().HasSelection() {
+			a.dg().ClearSelection()
+			a.statusMsg = ""
+			return a, nil
+		}
+	case "D":
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" && a.dg().TableName() != "query" {
+			tableName := a.dg().TableName()
+			tableInfo, ok := a.graph.Tables[tableName]
+			if !ok {
+				return a, nil
+			}
+			if tableInfo.Type != schema.TableTypeRegular {
+				a.statusMsg = "Cannot modify: this is a view"
+				return a, nil
+			}
+			if !tableInfo.HasPK {
+				a.statusMsg = "Cannot delete: table has no primary key"
+				return a, nil
+			}
+
+			columns := a.dg().Columns()
+
+			if a.dg().HasSelection() {
+				selectedValues := a.dg().SelectedRowValues()
+				var pks []PKValue
+				for _, rowVals := range selectedValues {
+					pk := buildPKFromRow(columns, rowVals, &a.graph, tableName)
+					if len(pk) > 0 {
+						pks = append(pks, pk)
+					}
+				}
+				if len(pks) == 0 {
+					a.statusMsg = "Cannot delete: no PK values found"
+					return a, nil
+				}
+				a.deleteConfirm = true
+				a.deletePKs = pks
+				a.deleteTable = tableName
+				a.statusMsg = fmt.Sprintf("Delete %d rows from \"%s\"? (y/n)", len(pks), tableName)
+				return a, nil
+			}
+
+			rowValues := a.dg().CursorRowValues()
+			pk := buildPKFromRow(columns, rowValues, &a.graph, tableName)
+			if len(pk) == 0 {
+				a.statusMsg = "Cannot delete: no PK values found"
+				return a, nil
+			}
+			a.deleteConfirm = true
+			a.deletePKs = []PKValue{pk}
+			a.deleteTable = tableName
+			a.statusMsg = fmt.Sprintf("Delete from \"%s\" where %s? (y/n)", tableName, pk.String())
+			return a, nil
+		}
+	case "a":
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" && a.dg().TableName() != "query" {
+			tableName := a.dg().TableName()
+			tableInfo, ok := a.graph.Tables[tableName]
+			if !ok {
+				return a, nil
+			}
+			if tableInfo.Type != schema.TableTypeRegular {
+				a.statusMsg = "Cannot modify: this is a view"
+				return a, nil
+			}
+			a.rowForm.ShowAdd(tableName, tableInfo.Columns, a.width, a.height)
+			return a, nil
+		}
+	case "A":
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" && a.dg().TableName() != "query" {
+			tableName := a.dg().TableName()
+			tableInfo, ok := a.graph.Tables[tableName]
+			if !ok {
+				return a, nil
+			}
+			if tableInfo.Type != schema.TableTypeRegular {
+				a.statusMsg = "Cannot modify: this is a view"
+				return a, nil
+			}
+			if !tableInfo.HasPK {
+				a.statusMsg = "Cannot duplicate: table has no primary key"
+				return a, nil
+			}
+			colNames := a.dg().Columns()
+			values := a.dg().CursorRowValues()
+			a.rowForm.ShowDuplicate(tableName, tableInfo.Columns, colNames, values, a.width, a.height)
 			return a, nil
 		}
 	case ":":
@@ -1033,6 +1264,9 @@ func (a App) View() string {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, "Terminal too small\n(min 40 columns)")
 	}
 
+	if a.rowForm.Visible() {
+		return a.rowForm.View()
+	}
 	if a.sqlEditor.Visible() {
 		return a.sqlEditor.View()
 	}
@@ -1122,6 +1356,36 @@ func (a App) renderStatusBar() string {
 	modeStyle := lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("3")).Bold(true)
 
 	var hints []string
+
+	if a.deleteConfirm {
+		hints = append(hints, modeStyle.Render(" -- DELETE CONFIRM -- "))
+		hints = append(hints, keyStyle.Render("[y]")+descStyle.Render(" Confirm"), keyStyle.Render("[n]")+descStyle.Render(" Cancel"))
+		return bgStyle.Render(lipgloss.JoinHorizontal(lipgloss.Left, strings.Join(hints, " ")+" "+descStyle.Render(a.statusMsg)))
+	}
+	if a.rowForm.Visible() {
+		modeLabel := "ADD"
+		if a.rowForm.Mode() == RowFormDuplicate {
+			modeLabel = "DUPLICATE"
+		}
+		if a.rowForm.Confirm() {
+			hints = append(hints, modeStyle.Render(fmt.Sprintf(" -- %s CONFIRM -- ", modeLabel)))
+			hints = append(hints, keyStyle.Render("[y]")+descStyle.Render(" Confirm"), keyStyle.Render("[n]")+descStyle.Render(" Back"), keyStyle.Render("[Esc]")+descStyle.Render(" Cancel"))
+		} else {
+			hints = append(hints, modeStyle.Render(fmt.Sprintf(" -- %s -- ", modeLabel)))
+		}
+		return bgStyle.Render(lipgloss.JoinHorizontal(lipgloss.Left, strings.Join(hints, " ")))
+	}
+
+	if a.focus == panelDataGrid && a.dg() != nil && a.dg().HasSelection() {
+		count := len(a.dg().SelectedRows())
+		visualLabel := "VISUAL"
+		if !a.dg().IsVisualActive() {
+			visualLabel = "MARKED"
+		}
+		hints = append(hints, modeStyle.Render(fmt.Sprintf(" -- %s -- %d selected ", visualLabel, count)))
+		hints = append(hints, keyStyle.Render("[D]")+descStyle.Render(" Delete"), keyStyle.Render("[Y]")+descStyle.Render(" Copy"), keyStyle.Render("[m]")+descStyle.Render(" Mark"), keyStyle.Render("[Esc]")+descStyle.Render(" Clear"))
+		return bgStyle.Render(lipgloss.JoinHorizontal(lipgloss.Left, strings.Join(hints, " ")))
+	}
 
 	if a.mode != ModeNormal {
 		hints = append(hints, modeStyle.Render(" -- "+a.mode.String()+" -- "))

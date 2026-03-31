@@ -298,3 +298,49 @@ func TestSchemaGraph_TableNames(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadSchema_HasDefault(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	graph, err := LoadSchema(ctx, pool)
+	if err != nil {
+		t.Fatalf("LoadSchema failed: %v", err)
+	}
+
+	customers, ok := graph.Tables["customers"]
+	if !ok {
+		t.Fatal("expected 'customers' table")
+	}
+
+	for _, col := range customers.Columns {
+		switch col.Name {
+		case "id":
+			if !col.HasDefault {
+				t.Error("expected customers.id to have default (serial)")
+			}
+		case "status":
+			if !col.HasDefault {
+				t.Error("expected customers.status to have default ('active')")
+			}
+		case "name":
+			if col.HasDefault {
+				t.Error("expected customers.name to NOT have default")
+			}
+		}
+	}
+
+	auditLog, ok := graph.Tables["audit_log"]
+	if !ok {
+		t.Fatal("expected 'audit_log' table")
+	}
+
+	for _, col := range auditLog.Columns {
+		if col.Name == "changed_at" && !col.HasDefault {
+			t.Error("expected audit_log.changed_at to have default (NOW())")
+		}
+		if col.Name == "event_type" && col.HasDefault {
+			t.Error("expected audit_log.event_type to NOT have default")
+		}
+	}
+}

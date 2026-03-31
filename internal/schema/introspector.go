@@ -20,6 +20,7 @@ type ColumnInfo struct {
 	Name       string
 	DataType   string
 	IsNullable bool
+	HasDefault bool
 	IsPK       bool
 	IsFK       bool
 }
@@ -138,6 +139,7 @@ SELECT
     a.attname AS column_name,
     pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
     NOT a.attnotnull AS is_nullable,
+    a.atthasdef AS has_default,
     EXISTS (
         SELECT 1 FROM pg_constraint con
         WHERE con.conrelid = c.oid
@@ -218,8 +220,8 @@ func loadColumns(ctx context.Context, pool *pgxpool.Pool, graph *SchemaGraph) er
 
 	for rows.Next() {
 		var schemaName, tableName, colName, dataType string
-		var isNullable, isPK bool
-		if err := rows.Scan(&schemaName, &tableName, &colName, &dataType, &isNullable, &isPK); err != nil {
+		var isNullable, hasDefault, isPK bool
+		if err := rows.Scan(&schemaName, &tableName, &colName, &dataType, &isNullable, &hasDefault, &isPK); err != nil {
 			return err
 		}
 
@@ -229,6 +231,7 @@ func loadColumns(ctx context.Context, pool *pgxpool.Pool, graph *SchemaGraph) er
 				Name:       colName,
 				DataType:   dataType,
 				IsNullable: isNullable,
+				HasDefault: hasDefault,
 				IsPK:       isPK,
 			})
 			graph.Tables[key] = tbl
