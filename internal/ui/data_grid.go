@@ -39,10 +39,12 @@ func (dg *DataGrid) AddFilter(fc FilterClause) {
 	for i, f := range dg.filters {
 		if f.Column == fc.Column {
 			dg.filters[i] = fc
+			dg.syncHeaderIndicators()
 			return
 		}
 	}
 	dg.filters = append(dg.filters, fc)
+	dg.syncHeaderIndicators()
 }
 
 func (dg *DataGrid) RemoveFilter(column string) {
@@ -53,10 +55,12 @@ func (dg *DataGrid) RemoveFilter(column string) {
 		}
 	}
 	dg.filters = filtered
+	dg.syncHeaderIndicators()
 }
 
 func (dg *DataGrid) ClearFilters() {
 	dg.filters = nil
+	dg.syncHeaderIndicators()
 }
 
 func (dg *DataGrid) Orders() []db.OrderClause {
@@ -78,13 +82,16 @@ func (dg *DataGrid) ToggleOrder(column string) string {
 		if o.Column == column {
 			if o.Direction == "ASC" {
 				dg.orders[i].Direction = "DESC"
+				dg.syncHeaderIndicators()
 				return "DESC"
 			}
 			dg.orders = append(dg.orders[:i], dg.orders[i+1:]...)
+			dg.syncHeaderIndicators()
 			return ""
 		}
 	}
 	dg.orders = append(dg.orders, db.OrderClause{Column: column, Direction: "ASC"})
+	dg.syncHeaderIndicators()
 	return "ASC"
 }
 
@@ -100,6 +107,19 @@ func (dg *DataGrid) RemoveOrder(column string) {
 
 func (dg *DataGrid) ClearOrders() {
 	dg.orders = nil
+	dg.syncHeaderIndicators()
+}
+
+func (dg *DataGrid) syncHeaderIndicators() {
+	filtered := make(map[string]string, len(dg.filters))
+	for _, f := range dg.filters {
+		filtered[f.Column] = f.String()
+	}
+	ordered := make(map[string]string, len(dg.orders))
+	for _, o := range dg.orders {
+		ordered[o.Column] = o.Direction
+	}
+	dg.table.SetFilterIndicators(filtered, ordered)
 }
 
 func NewDataGrid(pool *pgxpool.Pool) DataGrid {

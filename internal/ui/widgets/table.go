@@ -4,14 +4,32 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 )
+
+func displayWidth(s string) int {
+	return utf8.RuneCountInString(s)
+}
+
+func truncateToWidth(s string, maxWidth int) string {
+	runes := []rune(s)
+	if len(runes) <= maxWidth {
+		return s
+	}
+	if maxWidth <= 3 {
+		return string(runes[:maxWidth])
+	}
+	return string(runes[:maxWidth-3]) + "..."
+}
 
 type TableConfig struct {
 	ShowHeader       bool
 	ShowCursor       bool
 	FKColumns        map[string]bool
+	FilteredColumns  map[string]string
+	OrderedColumns   map[string]string
 	MaxCellWidth     int
 	MinCellWidth     int
 	HighlightFKColor lipgloss.Color
@@ -24,6 +42,8 @@ func DefaultConfig() TableConfig {
 		ShowHeader:       true,
 		ShowCursor:       true,
 		FKColumns:        make(map[string]bool),
+		FilteredColumns:  make(map[string]string),
+		OrderedColumns:   make(map[string]string),
 		MaxCellWidth:     40,
 		MinCellWidth:     5,
 		HighlightFKColor: lipgloss.Color("6"),
@@ -66,6 +86,46 @@ func (t *Table) SetSize(width, height int) {
 	t.width = width
 	t.height = height
 	t.clampScroll()
+}
+
+func (t *Table) SetFilterIndicators(filtered map[string]string, ordered map[string]string) {
+	t.config.FilteredColumns = filtered
+	t.config.OrderedColumns = ordered
+	t.adjustWidthsForIndicators()
+}
+
+func (t *Table) adjustWidthsForIndicators() {
+	for i, col := range t.columns {
+		if i >= len(t.colWidths) {
+			break
+		}
+		suffix := t.indicatorSuffix(col)
+		if suffix == "" {
+			continue
+		}
+		minWidth := displayWidth(col) + displayWidth(suffix)
+		if minWidth > t.config.MaxCellWidth {
+			minWidth = t.config.MaxCellWidth
+		}
+		if t.colWidths[i] < minWidth {
+			t.colWidths[i] = minWidth
+		}
+	}
+}
+
+func (t *Table) indicatorSuffix(col string) string {
+	suffix := ""
+	if dir, ok := t.config.OrderedColumns[col]; ok {
+		if dir == "ASC" {
+			suffix += " ▲"
+		} else {
+			suffix += " ▼"
+		}
+	}
+	if _, ok := t.config.FilteredColumns[col]; ok {
+		suffix += " ◈"
+	}
+	return suffix
 }
 
 func (t *Table) CursorRow() int  { return t.cursorRow }
@@ -325,7 +385,23 @@ func (t Table) ExpandedCellView() string {
 }
 
 func (t Table) renderHeader() string {
-	return t.renderCells(t.columns, -1, true)
+	decorated := make([]string, len(t.columns))
+	for i, col := range t.columns {
+		suffix := t.indicatorSuffix(col)
+		if suffix == "" {
+			decorated[i] = col
+			continue
+		}
+		w := t.colWidths[i]
+		suffixWidth := displayWidth(suffix)
+		nameSpace := w - suffixWidth
+		if nameSpace < 3 {
+			nameSpace = 3
+		}
+		name := truncateToWidth(col, nameSpace)
+		decorated[i] = name + suffix
+	}
+	return t.renderCells(decorated, -1, true)
 }
 
 func (t Table) renderSeparator() string {
@@ -379,7 +455,17 @@ func (t Table) renderCells(cells []string, rowIdx int, isHeader bool) string {
 		cellStyle := lipgloss.NewStyle()
 
 		if isHeader {
-			cellStyle = cellStyle.Bold(true).Foreground(lipgloss.Color("15"))
+			colName := t.columnName(colIdx)
+			_, hasFilter := t.config.FilteredColumns[colName]
+			_, hasOrder := t.config.OrderedColumns[colName]
+			switch {
+			case hasFilter:
+				cellStyle = cellStyle.Bold(true).Foreground(lipgloss.Color("3"))
+			case hasOrder:
+				cellStyle = cellStyle.Bold(true).Foreground(lipgloss.Color("5"))
+			default:
+				cellStyle = cellStyle.Bold(true).Foreground(lipgloss.Color("15"))
+			}
 		} else if isCursorRow {
 			cellStyle = cellStyle.Background(t.config.CursorBgColor)
 
@@ -416,7 +502,7 @@ func (t *Table) calculateColumnWidths() {
 	t.colWidths = make([]int, len(t.columns))
 
 	for i, col := range t.columns {
-		t.colWidths[i] = len(col)
+		t.colWidths[i] = displayWidth(col)
 	}
 
 	sampleSize := 100
@@ -427,9 +513,9 @@ func (t *Table) calculateColumnWidths() {
 	for _, row := range t.rows[:sampleSize] {
 		for i, cell := range row {
 			if i < len(t.colWidths) {
-				cellLen := len(sanitizeCell(cell))
-				if cellLen > t.colWidths[i] {
-					t.colWidths[i] = cellLen
+				cellWidth := displayWidth(sanitizeCell(cell))
+				if cellWidth > t.colWidths[i] {
+					t.colWidths[i] = cellWidth
 				}
 			}
 		}
@@ -443,6 +529,8 @@ func (t *Table) calculateColumnWidths() {
 			t.colWidths[i] = t.config.MaxCellWidth
 		}
 	}
+
+	t.adjustWidthsForIndicators()
 }
 
 func (t Table) visibleRowCount() int {
@@ -513,20 +601,15 @@ func sanitizeCell(s string) string {
 	return s
 }
 
-func truncateCell(s string, maxLen int) string {
+func truncateCell(s string, maxWidth int) string {
 	s = sanitizeCell(s)
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
+	return truncateToWidth(s, maxWidth)
 }
 
 func padRight(s string, width int) string {
-	if len(s) >= width {
+	w := displayWidth(s)
+	if w >= width {
 		return s
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", width-w)
 }
