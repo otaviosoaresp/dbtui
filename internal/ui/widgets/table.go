@@ -2,19 +2,21 @@ package widgets
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
 type TableConfig struct {
-	ShowHeader      bool
-	ShowCursor      bool
-	FKColumns       map[string]bool
-	MaxCellWidth    int
-	MinCellWidth    int
+	ShowHeader       bool
+	ShowCursor       bool
+	FKColumns        map[string]bool
+	MaxCellWidth     int
+	MinCellWidth     int
 	HighlightFKColor lipgloss.Color
-	CursorBgColor   lipgloss.Color
+	CursorBgColor    lipgloss.Color
+	SelectionBgColor lipgloss.Color
 }
 
 func DefaultConfig() TableConfig {
@@ -26,25 +28,30 @@ func DefaultConfig() TableConfig {
 		MinCellWidth:     5,
 		HighlightFKColor: lipgloss.Color("6"),
 		CursorBgColor:    lipgloss.Color("236"),
+		SelectionBgColor: lipgloss.Color("53"),
 	}
 }
 
 type Table struct {
-	columns     []string
-	rows        [][]string
-	colWidths   []int
-	cursorRow   int
-	cursorCol   int
-	scrollRow   int
-	scrollCol   int
-	width       int
-	height      int
-	config      TableConfig
+	columns      []string
+	rows         [][]string
+	colWidths    []int
+	cursorRow    int
+	cursorCol    int
+	scrollRow    int
+	scrollCol    int
+	width        int
+	height       int
+	config       TableConfig
+	markedRows   map[int]bool
+	visualAnchor int
 }
 
 func NewTable(config TableConfig) Table {
 	return Table{
-		config: config,
+		config:       config,
+		markedRows:   make(map[int]bool),
+		visualAnchor: -1,
 	}
 }
 
@@ -196,6 +203,93 @@ func (t *Table) SetCursorCol(col int) {
 	t.clampScroll()
 }
 
+func (t *Table) ToggleMark(row int) {
+	if row < 0 || row >= len(t.rows) {
+		return
+	}
+	if t.markedRows[row] {
+		delete(t.markedRows, row)
+	} else {
+		t.markedRows[row] = true
+	}
+}
+
+func (t *Table) StartVisual() {
+	if len(t.rows) == 0 {
+		return
+	}
+	t.visualAnchor = t.cursorRow
+}
+
+func (t *Table) StopVisual() {
+	t.visualAnchor = -1
+}
+
+func (t *Table) IsVisualActive() bool {
+	return t.visualAnchor >= 0
+}
+
+func (t *Table) ClearSelection() {
+	t.markedRows = make(map[int]bool)
+	t.visualAnchor = -1
+}
+
+func (t *Table) HasSelection() bool {
+	if t.visualAnchor >= 0 {
+		return true
+	}
+	return len(t.markedRows) > 0
+}
+
+func (t *Table) IsRowSelected(row int) bool {
+	if t.markedRows[row] {
+		return true
+	}
+	if t.visualAnchor >= 0 {
+		lo := t.visualAnchor
+		hi := t.cursorRow
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		return row >= lo && row <= hi
+	}
+	return false
+}
+
+func (t *Table) SelectedRows() []int {
+	seen := make(map[int]bool)
+	for row := range t.markedRows {
+		seen[row] = true
+	}
+	if t.visualAnchor >= 0 {
+		lo := t.visualAnchor
+		hi := t.cursorRow
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		for i := lo; i <= hi; i++ {
+			seen[i] = true
+		}
+	}
+	result := make([]int, 0, len(seen))
+	for row := range seen {
+		result = append(result, row)
+	}
+	sort.Ints(result)
+	return result
+}
+
+func (t *Table) SelectedRowValues() [][]string {
+	indices := t.SelectedRows()
+	result := make([][]string, 0, len(indices))
+	for _, idx := range indices {
+		if idx >= 0 && idx < len(t.rows) {
+			result = append(result, t.rows[idx])
+		}
+	}
+	return result
+}
+
 func (t Table) View() string {
 	if t.width == 0 || t.height == 0 || len(t.columns) == 0 {
 		return ""
@@ -263,6 +357,7 @@ func (t Table) renderRow(rowIdx int) string {
 func (t Table) renderCells(cells []string, rowIdx int, isHeader bool) string {
 	contentWidth := t.width - 1
 	isCursorRow := t.config.ShowCursor && rowIdx == t.cursorRow && rowIdx >= 0
+	isSelected := !isHeader && rowIdx >= 0 && t.IsRowSelected(rowIdx)
 
 	var parts []string
 	usedWidth := 0
@@ -293,6 +388,8 @@ func (t Table) renderCells(cells []string, rowIdx int, isHeader bool) string {
 					Background(lipgloss.Color("4")).
 					Foreground(lipgloss.Color("15"))
 			}
+		} else if isSelected {
+			cellStyle = cellStyle.Background(t.config.SelectionBgColor)
 		}
 
 		isFK := t.config.FKColumns[t.columnName(colIdx)]
@@ -330,7 +427,7 @@ func (t *Table) calculateColumnWidths() {
 	for _, row := range t.rows[:sampleSize] {
 		for i, cell := range row {
 			if i < len(t.colWidths) {
-				cellLen := len(cell)
+				cellLen := len(sanitizeCell(cell))
 				if cellLen > t.colWidths[i] {
 					t.colWidths[i] = cellLen
 				}
@@ -409,7 +506,15 @@ func (t *Table) clampScroll() {
 	}
 }
 
+func sanitizeCell(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	return s
+}
+
 func truncateCell(s string, maxLen int) string {
+	s = sanitizeCell(s)
 	if len(s) <= maxLen {
 		return s
 	}

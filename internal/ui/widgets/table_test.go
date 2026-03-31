@@ -223,3 +223,137 @@ func TestTable_Resize(t *testing.T) {
 		t.Error("expected different views for different sizes")
 	}
 }
+
+func TestTable_ToggleMark(t *testing.T) {
+	tbl := NewTable(DefaultConfig())
+	tbl.SetData(
+		[]string{"id", "name"},
+		[][]string{{"1", "Alice"}, {"2", "Bob"}, {"3", "Carol"}},
+	)
+	tbl.SetSize(40, 10)
+
+	tbl.ToggleMark(0)
+	if !tbl.IsRowSelected(0) {
+		t.Error("expected row 0 to be selected after mark")
+	}
+
+	tbl.ToggleMark(0)
+	if tbl.IsRowSelected(0) {
+		t.Error("expected row 0 to be deselected after second mark")
+	}
+
+	tbl.ToggleMark(1)
+	tbl.ToggleMark(2)
+	selected := tbl.SelectedRows()
+	if len(selected) != 2 {
+		t.Errorf("expected 2 selected rows, got %d", len(selected))
+	}
+	if selected[0] != 1 || selected[1] != 2 {
+		t.Errorf("expected rows [1,2], got %v", selected)
+	}
+}
+
+func TestTable_VisualMode(t *testing.T) {
+	tbl := NewTable(DefaultConfig())
+	tbl.SetData(
+		[]string{"id", "name"},
+		[][]string{{"1", "Alice"}, {"2", "Bob"}, {"3", "Carol"}, {"4", "Dave"}},
+	)
+	tbl.SetSize(40, 10)
+
+	if tbl.IsVisualActive() {
+		t.Error("expected visual mode inactive initially")
+	}
+
+	tbl.SetCursorRow(1)
+	tbl.StartVisual()
+
+	if !tbl.IsVisualActive() {
+		t.Error("expected visual mode active after StartVisual")
+	}
+
+	tbl.SetCursorRow(3)
+	selected := tbl.SelectedRows()
+	if len(selected) != 3 {
+		t.Errorf("expected 3 selected rows (1-3), got %d: %v", len(selected), selected)
+	}
+	if selected[0] != 1 || selected[1] != 2 || selected[2] != 3 {
+		t.Errorf("expected rows [1,2,3], got %v", selected)
+	}
+
+	tbl.StopVisual()
+	if tbl.IsVisualActive() {
+		t.Error("expected visual mode inactive after StopVisual")
+	}
+	if tbl.HasSelection() {
+		t.Error("expected no selection after StopVisual")
+	}
+}
+
+func TestTable_VisualAndMarks_Union(t *testing.T) {
+	tbl := NewTable(DefaultConfig())
+	tbl.SetData(
+		[]string{"id"},
+		[][]string{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}},
+	)
+	tbl.SetSize(40, 10)
+
+	tbl.ToggleMark(0)
+
+	tbl.SetCursorRow(3)
+	tbl.StartVisual()
+	tbl.SetCursorRow(4)
+
+	selected := tbl.SelectedRows()
+	if len(selected) != 3 {
+		t.Errorf("expected 3 selected (mark:0 + visual:3-4), got %d: %v", len(selected), selected)
+	}
+	if selected[0] != 0 || selected[1] != 3 || selected[2] != 4 {
+		t.Errorf("expected [0,3,4], got %v", selected)
+	}
+}
+
+func TestTable_ClearSelection(t *testing.T) {
+	tbl := NewTable(DefaultConfig())
+	tbl.SetData(
+		[]string{"id"},
+		[][]string{{"1"}, {"2"}, {"3"}},
+	)
+	tbl.SetSize(40, 10)
+
+	tbl.ToggleMark(0)
+	tbl.StartVisual()
+	tbl.SetCursorRow(2)
+
+	tbl.ClearSelection()
+
+	if tbl.HasSelection() {
+		t.Error("expected no selection after ClearSelection")
+	}
+	if tbl.IsVisualActive() {
+		t.Error("expected visual mode inactive after ClearSelection")
+	}
+}
+
+func TestTable_SelectedRowValues(t *testing.T) {
+	tbl := NewTable(DefaultConfig())
+	tbl.SetData(
+		[]string{"id", "name"},
+		[][]string{{"1", "Alice"}, {"2", "Bob"}, {"3", "Carol"}},
+	)
+	tbl.SetSize(40, 10)
+
+	tbl.ToggleMark(0)
+	tbl.ToggleMark(2)
+
+	values := tbl.SelectedRowValues()
+	if len(values) != 2 {
+		t.Fatalf("expected 2 selected row values, got %d", len(values))
+	}
+	if values[0][1] != "Alice" {
+		t.Errorf("expected Alice, got %q", values[0][1])
+	}
+	if values[1][1] != "Carol" {
+		t.Errorf("expected Carol, got %q", values[1][1])
+	}
+}

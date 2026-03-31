@@ -144,6 +144,7 @@ func (dg *DataGrid) Reload() tea.Cmd {
 	dg.offset = 0
 	dg.loading = true
 	dg.err = nil
+	dg.table.ClearSelection()
 	return dg.loadPageCmd()
 }
 
@@ -196,12 +197,49 @@ func (dg *DataGrid) IsExpanding() bool {
 	return dg.expanding
 }
 
+func (dg *DataGrid) ToggleMarkRow() {
+	dg.table.ToggleMark(dg.table.CursorRow())
+}
+
+func (dg *DataGrid) StartVisual() {
+	dg.table.StartVisual()
+}
+
+func (dg *DataGrid) StopVisual() {
+	dg.table.StopVisual()
+}
+
+func (dg *DataGrid) IsVisualActive() bool {
+	return dg.table.IsVisualActive()
+}
+
+func (dg *DataGrid) ClearSelection() {
+	dg.table.ClearSelection()
+}
+
+func (dg *DataGrid) HasSelection() bool {
+	return dg.table.HasSelection()
+}
+
+func (dg *DataGrid) SelectedRows() []int {
+	return dg.table.SelectedRows()
+}
+
+func (dg *DataGrid) SelectedRowValues() [][]string {
+	return dg.table.SelectedRowValues()
+}
+
+func (dg *DataGrid) MoveDownRow() {
+	dg.table.MoveDown()
+}
+
 func (dg *DataGrid) LoadTable(tableName string) tea.Cmd {
 	dg.tableName = tableName
 	dg.offset = 0
 	dg.loading = true
 	dg.err = nil
 	dg.expanding = false
+	dg.table.ClearSelection()
 
 	dg.updateFKConfig()
 
@@ -302,6 +340,7 @@ func (dg DataGrid) nextPage() (DataGrid, tea.Cmd) {
 	}
 	dg.offset += pageSize
 	dg.loading = true
+	dg.table.ClearSelection()
 	return dg, dg.loadPageCmd()
 }
 
@@ -314,6 +353,7 @@ func (dg DataGrid) prevPage() (DataGrid, tea.Cmd) {
 		dg.offset = 0
 	}
 	dg.loading = true
+	dg.table.ClearSelection()
 	return dg, dg.loadPageCmd()
 }
 
