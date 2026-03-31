@@ -10,13 +10,18 @@ Navigate relational data by following FK references, previewing linked rows inli
 - **FK Preview** -- Press `p` to toggle the preview panel. See the referenced row without leaving the current view. `H`/`L` scrolls the preview horizontally.
 - **Fuzzy Table Search** -- Press `/` to fuzzy-search tables by name.
 - **Fuzzy Column Jump** -- Press `c` to fuzzy-search columns and jump directly.
-- **Column Filtering** -- Press `f` to filter by column value. Supports `=`, `!=`, `>`, `<`, `%like%`, `null`, `!null`. Multiple filters stack with AND.
+- **Column Filtering** -- Press `f` to filter by column value. Supports `=`, `!=`, `>`, `<`, `%like%`, `null`, `!null`. Multiple filters stack with AND. Filtered columns show a yellow header with a diamond indicator.
+- **Column Ordering** -- Press `o` to cycle ASC/DESC/none. Ordered columns show a purple header with arrow indicators. Press `O` to clear all orders.
+- **Row Operations** -- Press `a` to add a row via vertical form, `A` to duplicate the current row, `D` to delete with confirmation. All mutations run within transactions.
+- **Visual Mode** -- Press `V` for Vim-style range selection or `m` to toggle individual row marks. `D` deletes all selected rows in a single transaction. `Y` copies all selected rows to clipboard.
 - **Record View** -- Press `v` to see the current row as a vertical key-value list. Useful for tables with many columns.
 - **Inline Editing** -- Press `i` to edit a cell value. Confirmation dialog shows the UPDATE SQL before executing within a transaction.
+- **SQL Editor** -- Press `E` to open a multiline SQL editor. Ctrl+e executes, Ctrl+s saves as script.
 - **Command Mode** -- Press `:` to enter SQL directly or run saved scripts. Results open in buffers.
 - **Buffer System** -- Multiple tables and query results as tabs. `]`/`[` switches buffers. `:bd` closes.
-- **SQL Scripts** -- Save `.sql` files in `~/.config/dbtui/scripts/` and run with `:run script_name`.
-- **Vim Keybindings** -- `j/k` rows, `h/l` columns, `d/u` page, `g/G` top/bottom. No Ctrl keys needed (tmux safe).
+- **SQL Scripts** -- Save `.sql` files in `~/.config/dbtui/scripts/` and run with `:run script_name`. Press `S` to browse scripts.
+- **Vim Keybindings** -- `j/k` rows, `h/l` columns, `d/u` page, `g/G` top/bottom, `w/b` FK columns, `0/$` first/last column. No Ctrl keys needed (tmux safe).
+- **Clipboard** -- `y` copies cell value, `Y` copies entire row (tab-separated).
 - **Connection Manager** -- Save and select database connections. Stored in `~/.config/dbtui/connections.yml`.
 - **Schema Introspection** -- Loads FK relationships, composite keys, self-referential FKs, views, and materialized views via `pg_catalog`.
 - **Responsive Layout** -- Adapts to terminal width. Table list collapses in narrow terminals.
@@ -61,10 +66,13 @@ dbtui
 |-----|--------|
 | `j` / `k` | Move down / up (rows) |
 | `h` / `l` | Move left / right (columns) |
+| `0` / `$` | Jump to first / last column |
+| `w` / `b` | Jump to next / previous FK column |
 | `g` / `G` | Jump to top / bottom |
 | `d` / `u` | Page down / up |
 | `n` / `N` | Next / previous data page (LIMIT/OFFSET) |
 | `Tab` | Switch panel (table list / data grid) |
+| `S` | Switch left panel (Tables / Scripts) |
 | `]` / `[` | Next / previous buffer |
 | `c` | Fuzzy jump to column |
 
@@ -85,20 +93,46 @@ dbtui
 | `v` | Record view (vertical key-value) |
 | `e` | Expand cell content |
 
-### Filtering
+### Filtering & Ordering
 
 | Key | Action |
 |-----|--------|
 | `f` | Filter column (`=`, `!=`, `>`, `<`, `%like%`, `null`, `!null`) |
 | `x` | Remove filter on current column |
 | `F` | Clear all filters |
+| `o` | Toggle order (ASC / DESC / remove) |
+| `O` | Clear all orders |
+
+### Selection (Visual Mode)
+
+| Key | Action |
+|-----|--------|
+| `V` | Visual mode (range select) |
+| `m` | Toggle mark on current row |
+| `Esc` | Clear selection |
+
+### Row Operations
+
+| Key | Action |
+|-----|--------|
+| `D` | Delete row (or selected rows) |
+| `a` | Add new row (form) |
+| `A` | Duplicate current row (form) |
 
 ### Command & Edit
 
 | Key | Action |
 |-----|--------|
 | `:` | Command mode (SQL, `:run script`, `:bd`, `:bn`, `:bp`, `:buffers`) |
+| `E` | Open SQL editor (multiline) |
 | `i` | Edit cell (INSERT mode, confirm with `y`/`n`) |
+
+### Clipboard
+
+| Key | Action |
+|-----|--------|
+| `y` | Copy cell value |
+| `Y` | Copy row (or selected rows, tab-separated) |
 
 ### Other
 
@@ -154,18 +188,20 @@ internal/db/query.go               -- queries, filters, raw SQL, updates
 internal/ui/app.go                 -- root model, modal architecture, buffer system
 internal/ui/messages.go            -- centralized message types
 internal/ui/table_list.go          -- fuzzy table search panel
-internal/ui/data_grid.go           -- data display with pagination + filters
+internal/ui/data_grid.go           -- data display, pagination, filters, selection
 internal/ui/fk_preview.go          -- FK preview with debounce + cache
 internal/ui/breadcrumb.go          -- navigation stack + breadcrumb trail
 internal/ui/filter.go              -- filter parsing + filter list overlay
 internal/ui/command_line.go        -- command input + history + script completion
+internal/ui/sql_editor.go          -- multiline SQL editor (bubbles/textarea)
 internal/ui/record_view.go         -- vertical record view overlay
+internal/ui/row_form.go            -- vertical form for add/duplicate row
 internal/ui/column_picker.go       -- fuzzy column jump overlay
 internal/ui/help.go                -- help overlay
 internal/ui/connect_form.go        -- connection form
 internal/ui/connection_list.go     -- saved connections list
 internal/ui/root.go                -- connection -> app transition
-internal/ui/widgets/table.go       -- shared custom table widget
+internal/ui/widgets/table.go       -- table widget (selection, FK highlight, indicators)
 ```
 
 Built with [BubbleTea](https://github.com/charmbracelet/bubbletea), [LipGloss](https://github.com/charmbracelet/lipgloss), and [pgx](https://github.com/jackc/pgx).
