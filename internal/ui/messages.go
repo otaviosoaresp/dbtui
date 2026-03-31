@@ -83,3 +83,5 @@ type EditorQueryResultMsg struct {
 	Result db.QueryResult
 	Err    error
 }
+
+type SwitchConnectionMsg struct{}

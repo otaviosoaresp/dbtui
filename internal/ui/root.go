@@ -63,6 +63,16 @@ func (r Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		r.connList, cmd = r.connList.Update(msg)
 		return r, cmd
+
+	case SwitchConnectionMsg:
+		if r.pool != nil {
+			r.pool.Close()
+			r.pool = nil
+		}
+		r.state = stateConnectionList
+		r.connList = NewConnectionList()
+		r.connList.SetSize(r.width, r.height)
+		return r, nil
 	}
 
 	if r.state == stateApp {

@@ -113,6 +113,7 @@ func (h *HelpOverlay) buildLines() {
 			{"A", "Duplicate current row (form)"},
 		}},
 		{"Other", []struct{ k, d string }{
+			{"C", "Switch database connection"},
 			{"R", "Refresh schema from database"},
 			{"?", "Toggle this help"},
 			{"q", "Quit"},
