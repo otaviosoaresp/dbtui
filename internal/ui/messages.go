@@ -85,3 +85,9 @@ type EditorQueryResultMsg struct {
 }
 
 type SwitchConnectionMsg struct{}
+
+type AIResponseMsg struct {
+	Prompt string
+	SQL    string
+	Err    error
+}
