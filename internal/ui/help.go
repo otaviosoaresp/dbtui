@@ -78,7 +78,7 @@ func (h *HelpOverlay) buildLines() {
 			{"/", "Fuzzy search tables"},
 			{"Enter", "Select table / Follow FK link"},
 			{"Backspace", "Go back in FK navigation"},
-			{"p", "Toggle FK preview panel"},
+			{"P", "Toggle FK preview panel"},
 			{"H / L", "Scroll FK preview left / right"},
 		}},
 		{"Views", []struct{ k, d string }{
@@ -111,6 +111,9 @@ func (h *HelpOverlay) buildLines() {
 			{"D", "Delete current row"},
 			{"a", "Add new row (form)"},
 			{"A", "Duplicate current row (form)"},
+		}},
+		{"AI", []struct{ k, d string }{
+			{"p", "Open command palette"},
 		}},
 		{"Other", []struct{ k, d string }{
 			{"C", "Switch database connection"},

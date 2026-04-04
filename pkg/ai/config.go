@@ -47,6 +47,19 @@ func LoadConfig(path string) (AIConfig, error) {
 	return cfg, nil
 }
 
+func NewProvider(cfg AIConfig) Provider {
+	switch cfg.Provider {
+	case "openrouter":
+		return NewOpenRouterProvider(cfg.OpenRouter.APIKey, cfg.OpenRouter.Model)
+	case "ollama":
+		return NewOllamaProvider(cfg.Ollama.URL, cfg.Ollama.Model)
+	case "claude-code":
+		return NewClaudeCodeProvider()
+	default:
+		return nil
+	}
+}
+
 func SaveConfig(path string, cfg AIConfig) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
