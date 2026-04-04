@@ -15,6 +15,14 @@ type SQLRequest struct {
 type SQLResponse struct {
 	SQL   string
 	Error string
+	Usage TokenUsage
+}
+
+type TokenUsage struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	Estimated        bool
 }
 
 type SchemaContext struct {

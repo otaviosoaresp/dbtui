@@ -1792,7 +1792,7 @@ func (a App) handleAIPromptSubmit(msg AIPromptSubmitMsg) (tea.Model, tea.Cmd) {
 		if resp.Error != "" {
 			return AIResponseMsg{Prompt: prompt, Err: fmt.Errorf("%s", resp.Error)}
 		}
-		return AIResponseMsg{Prompt: prompt, SQL: resp.SQL}
+		return AIResponseMsg{Prompt: prompt, SQL: resp.SQL, Usage: resp.Usage}
 	}
 }
 
@@ -1811,7 +1811,7 @@ func (a App) handleAIResponse(msg AIResponseMsg) (tea.Model, tea.Cmd) {
 		Timestamp: time.Now(),
 	})
 
-	a.aiPreview.Show(msg.Prompt, msg.SQL, a.width, a.height)
+	a.aiPreview.Show(msg.Prompt, msg.SQL, msg.Usage, a.width, a.height)
 	a.statusMsg = "SQL generated"
 	return a, nil
 }

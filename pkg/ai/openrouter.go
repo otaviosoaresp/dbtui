@@ -46,8 +46,15 @@ type openRouterChoice struct {
 	Message openRouterMessage `json:"message"`
 }
 
+type openRouterUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 type openRouterResponse struct {
 	Choices []openRouterChoice `json:"choices"`
+	Usage   openRouterUsage    `json:"usage"`
 }
 
 func (p *OpenRouterProvider) GenerateSQL(ctx context.Context, req SQLRequest) (SQLResponse, error) {
@@ -105,7 +112,14 @@ func (p *OpenRouterProvider) GenerateSQL(ctx context.Context, req SQLRequest) (S
 		return SQLResponse{Error: "no SQL found in response"}, nil
 	}
 
-	return SQLResponse{SQL: sql}, nil
+	return SQLResponse{
+		SQL: sql,
+		Usage: TokenUsage{
+			PromptTokens:     result.Usage.PromptTokens,
+			CompletionTokens: result.Usage.CompletionTokens,
+			TotalTokens:      result.Usage.TotalTokens,
+		},
+	}, nil
 }
 
 func ValidateOpenRouter(apiKey string) error {

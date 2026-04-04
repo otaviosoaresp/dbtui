@@ -38,7 +38,26 @@ func (p *ClaudeCodeProvider) GenerateSQL(ctx context.Context, req SQLRequest) (S
 		return SQLResponse{Error: "no SQL found in response"}, nil
 	}
 
-	return SQLResponse{SQL: sql}, nil
+	promptTokens := estimateTokens(fullPrompt)
+	completionTokens := estimateTokens(raw)
+
+	return SQLResponse{
+		SQL: sql,
+		Usage: TokenUsage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      promptTokens + completionTokens,
+			Estimated:        true,
+		},
+	}, nil
+}
+
+func estimateTokens(text string) int {
+	count := len(text) / 4
+	if count == 0 && len(text) > 0 {
+		count = 1
+	}
+	return count
 }
 
 func (p *ClaudeCodeProvider) buildArgs() []string {

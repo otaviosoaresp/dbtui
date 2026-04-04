@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/otaviosoaresp/dbtui/pkg/ai"
 )
 
 type AIPreviewAction int
@@ -26,6 +28,7 @@ type AIPreviewActionMsg struct {
 type AIPreview struct {
 	prompt    string
 	sql       string
+	usage     ai.TokenUsage
 	visible   bool
 	width     int
 	height    int
@@ -33,9 +36,10 @@ type AIPreview struct {
 	saveInput string
 }
 
-func (ap *AIPreview) Show(prompt, sql string, width, height int) {
+func (ap *AIPreview) Show(prompt, sql string, usage ai.TokenUsage, width, height int) {
 	ap.prompt = prompt
 	ap.sql = sql
+	ap.usage = usage
 	ap.visible = true
 	ap.width = width
 	ap.height = height
@@ -137,6 +141,8 @@ func (ap AIPreview) View() string {
 	}
 
 	lines = append(lines, "")
+	lines = append(lines, ap.renderUsageLine(dimStyle))
+	lines = append(lines, "")
 
 	if ap.saving {
 		lines = append(lines, saveStyle.Render("  Save as: ")+ap.saveInput+"_")
@@ -154,4 +160,17 @@ func (ap AIPreview) View() string {
 	box := style.Render(content)
 
 	return lipgloss.Place(ap.width, ap.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+func (ap AIPreview) renderUsageLine(style lipgloss.Style) string {
+	u := ap.usage
+	if u.TotalTokens == 0 {
+		return ""
+	}
+	label := "tokens"
+	if u.Estimated {
+		label = "tokens (est.)"
+	}
+	return style.Render(fmt.Sprintf("  %s: %d in + %d out = %d total",
+		label, u.PromptTokens, u.CompletionTokens, u.TotalTokens))
 }

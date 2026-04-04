@@ -36,7 +36,9 @@ type ollamaRequest struct {
 }
 
 type ollamaResponse struct {
-	Response string `json:"response"`
+	Response        string `json:"response"`
+	PromptEvalCount int    `json:"prompt_eval_count"`
+	EvalCount       int    `json:"eval_count"`
 }
 
 func (p *OllamaProvider) GenerateSQL(ctx context.Context, req SQLRequest) (SQLResponse, error) {
@@ -88,7 +90,14 @@ func (p *OllamaProvider) GenerateSQL(ctx context.Context, req SQLRequest) (SQLRe
 		return SQLResponse{Error: "no SQL found in response"}, nil
 	}
 
-	return SQLResponse{SQL: sql}, nil
+	return SQLResponse{
+		SQL: sql,
+		Usage: TokenUsage{
+			PromptTokens:     result.PromptEvalCount,
+			CompletionTokens: result.EvalCount,
+			TotalTokens:      result.PromptEvalCount + result.EvalCount,
+		},
+	}, nil
 }
 
 func ValidateOllama(url string) error {
