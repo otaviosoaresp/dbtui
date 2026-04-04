@@ -39,7 +39,17 @@ internal/ui/sql_editor.go         -- E multiline SQL editor (bubbles/textarea)
 internal/ui/record_view.go        -- v vertical record view
 internal/ui/column_picker.go      -- c fuzzy column jump
 internal/ui/help.go               -- ? help overlay
+internal/ui/palette.go            -- p command palette overlay (fuzzy-searchable actions)
+internal/ui/ai_prompt.go          -- AI natural language input with history
+internal/ui/ai_preview.go         -- AI SQL preview modal (execute/edit/save/discard)
 internal/ui/widgets/table.go      -- shared table widget (horizontal scroll, FK highlight, auto-size)
+internal/config/ai_history.go     -- AI prompt history persistence
+pkg/ai/provider.go               -- Provider interface, types (SchemaContext, SQLRequest/Response)
+pkg/ai/config.go                 -- AIConfig, LoadConfig, SaveConfig, NewProvider (ai.yml)
+pkg/ai/claudecode.go             -- ClaudeCodeProvider (os/exec subprocess)
+pkg/ai/openrouter.go             -- OpenRouterProvider (net/http)
+pkg/ai/ollama.go                 -- OllamaProvider (net/http)
+pkg/ai/prompt.go                 -- BuildSystemPrompt(), schema serialization
 ```
 
 ## Key Patterns
@@ -57,10 +67,11 @@ All async I/O runs as `tea.Cmd`. UI never blocks. Pattern:
 
 `AppMode` in app.go controls key routing:
 
-- `ModeNormal`: navigation keys (j/k/h/l/g/G/d/u), triggers (f/:/i/E/v/c)
+- `ModeNormal`: navigation keys (j/k/h/l/g/G/d/u), triggers (f/:/i/E/v/c/p)
 - `ModeFilter`: filter textinput active, Enter applies, Esc cancels
 - `ModeCommand`: command line active, Enter executes, Esc cancels
 - `ModeInsert`: cell edit textinput, Enter confirms, Esc cancels
+- `ModeAIPrompt`: AI prompt textinput active, Enter submits, Esc cancels
 
 All modes return to Normal via Esc. Keys like q only quit in Normal mode.
 
@@ -104,7 +115,7 @@ Test data schema in `testdata/init.sql`: customers, orders, order_items, product
 - All DB values formatted as strings via `formatValue()` in query.go
 - PK values stored as `string` (Postgres does implicit cast)
 - No comments in code. If something needs a comment, extract it into a function with a descriptive name
-- Keybindings: Normal mode uses only letters and Tab. Zero Ctrl keys (except Ctrl+c/Ctrl+e/Ctrl+s in editor) to avoid tmux conflicts
+- Keybindings: Normal mode uses only letters and Tab. Zero Ctrl keys (except Ctrl+c/Ctrl+e/Ctrl+s in editor) to avoid tmux conflicts. `p` opens command palette, `P` toggles FK preview
 - Pointer receiver methods (`*App`) for mutation, value receiver methods (`App`) for `Update`/`View` (BubbleTea convention). Return values from `Update` must be `App` (not `*App`) for Root model compatibility
 - New message types go in messages.go (centralized)
 - New overlays follow the pattern: check `Visible()` in View, handle keys before `handleKeyPress` in Update
@@ -115,6 +126,8 @@ Test data schema in `testdata/init.sql`: customers, orders, order_items, product
 ~/.config/dbtui/connections.yml   -- saved database connections
 ~/.config/dbtui/scripts/*.sql     -- SQL scripts
 ~/.config/dbtui/history           -- command history (persisted)
+~/.config/dbtui/ai.yml            -- AI provider configuration
+~/.config/dbtui/ai_history        -- AI prompt history
 ```
 
 ## Dependencies
