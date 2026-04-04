@@ -14,19 +14,15 @@ func TestClaudeCodeProviderName(t *testing.T) {
 
 func TestClaudeCodeBuildArgs(t *testing.T) {
 	p := &ClaudeCodeProvider{}
-	args := p.buildArgs("test prompt")
+	args := p.buildArgs()
 
-	expectedFlags := []string{"-p", "--output-format", "text"}
-	for _, flag := range expectedFlags {
-		found := false
-		for _, arg := range args {
-			if arg == flag {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected flag %q in args %v", flag, args)
+	expected := []string{"-p", "-", "--output-format", "text"}
+	if len(args) != len(expected) {
+		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
+	}
+	for i, arg := range args {
+		if arg != expected[i] {
+			t.Errorf("arg[%d]: expected %q, got %q", i, expected[i], arg)
 		}
 	}
 }

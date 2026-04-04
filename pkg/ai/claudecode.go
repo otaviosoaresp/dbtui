@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -22,8 +23,8 @@ func (p *ClaudeCodeProvider) GenerateSQL(ctx context.Context, req SQLRequest) (S
 	systemPrompt := BuildSystemPrompt(req.Schema)
 	fullPrompt := systemPrompt + "\nUser request: " + req.Prompt
 
-	args := p.buildArgs(fullPrompt)
-	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd := exec.CommandContext(ctx, "claude", p.buildArgs()...)
+	cmd.Stdin = bytes.NewReader([]byte(fullPrompt))
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -40,8 +41,8 @@ func (p *ClaudeCodeProvider) GenerateSQL(ctx context.Context, req SQLRequest) (S
 	return SQLResponse{SQL: sql}, nil
 }
 
-func (p *ClaudeCodeProvider) buildArgs(prompt string) []string {
-	return []string{"-p", prompt, "--output-format", "text"}
+func (p *ClaudeCodeProvider) buildArgs() []string {
+	return []string{"-p", "-", "--output-format", "text"}
 }
 
 var sqlStartPattern = regexp.MustCompile(`(?im)^(SELECT|INSERT|UPDATE|DELETE|WITH|CREATE|ALTER|DROP|EXPLAIN)\b`)
