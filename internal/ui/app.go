@@ -1859,7 +1859,7 @@ func (a *App) buildSchemaContext() ai.SchemaContext {
 		}
 		tables = append(tables, tableDef)
 	}
-	return ai.SchemaContext{Tables: tables}
+	return ai.SchemaContext{Tables: tables, EnumValues: a.graph.EnumValues}
 }
 
 func buildPKFromRow(columns []string, values []string, graph *schema.SchemaGraph, tableName string) PKValue {

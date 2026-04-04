@@ -18,7 +18,8 @@ type SQLResponse struct {
 }
 
 type SchemaContext struct {
-	Tables []TableDef
+	Tables     []TableDef
+	EnumValues map[string][]string
 }
 
 type TableDef struct {

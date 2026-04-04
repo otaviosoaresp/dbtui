@@ -44,6 +44,7 @@ type ForeignKey struct {
 type SchemaGraph struct {
 	Tables      map[string]TableInfo
 	ForeignKeys map[string][]ForeignKey
+	EnumValues  map[string][]string
 }
 
 func (sg *SchemaGraph) TableNames() []string {
@@ -160,6 +161,7 @@ func LoadSchema(ctx context.Context, pool *pgxpool.Pool) (SchemaGraph, error) {
 	graph := SchemaGraph{
 		Tables:      make(map[string]TableInfo),
 		ForeignKeys: make(map[string][]ForeignKey),
+		EnumValues:  make(map[string][]string),
 	}
 
 	if err := loadTables(ctx, pool, &graph); err != nil {
@@ -172,6 +174,10 @@ func LoadSchema(ctx context.Context, pool *pgxpool.Pool) (SchemaGraph, error) {
 
 	if err := loadForeignKeys(ctx, pool, &graph); err != nil {
 		return graph, fmt.Errorf("loading foreign keys: %w", err)
+	}
+
+	if err := loadEnumValues(ctx, pool, &graph); err != nil {
+		return graph, fmt.Errorf("loading enum values: %w", err)
 	}
 
 	markFKColumns(&graph)
@@ -262,6 +268,40 @@ func loadForeignKeys(ctx context.Context, pool *pgxpool.Pool, graph *SchemaGraph
 			ReferencedTable:   refTable,
 			ReferencedColumns: refCols,
 		})
+	}
+	return rows.Err()
+}
+
+const enumQuery = `
+SELECT
+    n.nspname AS schema_name,
+    t.typname AS enum_name,
+    array_agg(e.enumlabel ORDER BY e.enumsortorder) AS enum_values
+FROM pg_type t
+JOIN pg_namespace n ON t.typnamespace = n.oid
+JOIN pg_enum e ON e.enumtypid = t.oid
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+GROUP BY n.nspname, t.typname
+`
+
+func loadEnumValues(ctx context.Context, pool *pgxpool.Pool, graph *SchemaGraph) error {
+	rows, err := pool.Query(ctx, enumQuery)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var schemaName, enumName string
+		var values []string
+		if err := rows.Scan(&schemaName, &enumName, &values); err != nil {
+			return err
+		}
+		key := enumName
+		if schemaName != "public" {
+			key = schemaName + "." + enumName
+		}
+		graph.EnumValues[key] = values
 	}
 	return rows.Err()
 }

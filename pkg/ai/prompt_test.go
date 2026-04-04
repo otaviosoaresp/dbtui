@@ -61,3 +61,31 @@ func TestBuildSystemPromptEmptySchema(t *testing.T) {
 		t.Error("prompt should still contain PostgreSQL instructions")
 	}
 }
+
+func TestBuildSystemPromptWithEnums(t *testing.T) {
+	schema := SchemaContext{
+		Tables: []TableDef{
+			{
+				Name: "users",
+				Columns: []ColumnDef{
+					{Name: "status", DataType: "user_status"},
+				},
+			},
+		},
+		EnumValues: map[string][]string{
+			"user_status": {"active", "inactive", "suspended"},
+		},
+	}
+
+	prompt := BuildSystemPrompt(schema)
+
+	if !strings.Contains(prompt, "Enum types:") {
+		t.Error("prompt should contain enum section")
+	}
+	if !strings.Contains(prompt, "user_status") {
+		t.Error("prompt should contain enum name")
+	}
+	if !strings.Contains(prompt, "active") {
+		t.Error("prompt should contain enum values")
+	}
+}

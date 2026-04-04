@@ -28,6 +28,13 @@ func BuildSystemPrompt(schema SchemaContext) string {
 		sb.WriteString("\n")
 	}
 
+	if len(schema.EnumValues) > 0 {
+		sb.WriteString("\nEnum types:\n")
+		for name, values := range schema.EnumValues {
+			sb.WriteString(fmt.Sprintf("  %s: %s\n", name, strings.Join(values, ", ")))
+		}
+	}
+
 	return sb.String()
 }
 
