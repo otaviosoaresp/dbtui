@@ -44,8 +44,8 @@ func TestExtractSQL(t *testing.T) {
 			expected: "SELECT * FROM users",
 		},
 		{
-			name:     "SQL with surrounding text",
-			input:    "Here is the query:\nSELECT * FROM users\nThis returns all users.",
+			name:     "SQL with semicolon",
+			input:    "Here is the query:\nSELECT * FROM users;",
 			expected: "SELECT * FROM users",
 		},
 		{
@@ -54,9 +54,24 @@ func TestExtractSQL(t *testing.T) {
 			expected: "SELECT u.name, o.total\nFROM users u\nJOIN orders o ON u.id = o.user_id",
 		},
 		{
+			name:     "multiline indented SQL",
+			input:    "SELECT\n    u.name,\n    u.email\nFROM users u\nWHERE u.active = true",
+			expected: "SELECT\n    u.name,\n    u.email\nFROM users u\nWHERE u.active = true",
+		},
+		{
 			name:     "CTE query",
 			input:    "WITH recent AS (\n  SELECT * FROM orders WHERE created_at > NOW() - INTERVAL '30 days'\n)\nSELECT * FROM recent",
 			expected: "WITH recent AS (\n  SELECT * FROM orders WHERE created_at > NOW() - INTERVAL '30 days'\n)\nSELECT * FROM recent",
+		},
+		{
+			name:     "SQL with semicolon and trailing text",
+			input:    "SELECT * FROM users\nWHERE active = true;\nThis query returns active users.",
+			expected: "SELECT * FROM users\nWHERE active = true",
+		},
+		{
+			name:     "just raw text returns as-is",
+			input:    "I cannot generate SQL for that request",
+			expected: "I cannot generate SQL for that request",
 		},
 	}
 

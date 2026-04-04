@@ -67,28 +67,6 @@ func (p *ClaudeCodeProvider) buildArgs() []string {
 var sqlStartPattern = regexp.MustCompile(`(?im)^(SELECT|INSERT|UPDATE|DELETE|WITH|CREATE|ALTER|DROP|EXPLAIN)\b`)
 var codeFencePattern = regexp.MustCompile("(?s)```(?:sql)?\\s*\n?(.*?)\n?```")
 
-var sqlContinuationPrefixes = []string{
-	"JOIN", "WHERE", "ORDER", "GROUP", "HAVING", "LIMIT", "OFFSET", "UNION", ")",
-	"FROM", "SET", "ON", "AND", "OR", "INNER", "LEFT", "RIGHT", "FULL", "CROSS",
-}
-
-func isSQLLine(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
-		return false
-	}
-	upper := strings.ToUpper(trimmed)
-	if sqlStartPattern.MatchString(trimmed) {
-		return true
-	}
-	for _, prefix := range sqlContinuationPrefixes {
-		if strings.HasPrefix(upper, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
 func ExtractSQL(raw string) string {
 	raw = strings.TrimSpace(raw)
 
@@ -96,41 +74,36 @@ func ExtractSQL(raw string) string {
 		return strings.TrimSpace(matches[1])
 	}
 
-	if sqlStartPattern.MatchString(raw) {
-		lines := strings.Split(raw, "\n")
-		var sqlLines []string
-		capturing := false
-		for i, line := range lines {
-			if !capturing && sqlStartPattern.MatchString(line) {
-				capturing = true
-			}
-			if !capturing {
-				continue
-			}
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" {
-				nextHasSQL := false
-				for _, remaining := range lines[i+1:] {
-					if strings.TrimSpace(remaining) != "" {
-						nextHasSQL = isSQLLine(remaining)
-						break
-					}
-				}
-				if !nextHasSQL {
-					break
-				}
-				sqlLines = append(sqlLines, line)
-				continue
-			}
-			if !isSQLLine(line) && len(sqlLines) > 0 {
-				break
-			}
-			sqlLines = append(sqlLines, line)
+	lines := strings.Split(raw, "\n")
+	startIdx := -1
+	for i, line := range lines {
+		if sqlStartPattern.MatchString(line) {
+			startIdx = i
+			break
 		}
-		return strings.TrimSpace(strings.Join(sqlLines, "\n"))
 	}
 
-	return strings.TrimSpace(raw)
+	if startIdx == -1 {
+		return raw
+	}
+
+	endIdx := len(lines)
+	foundSemicolon := false
+	for i := startIdx; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasSuffix(trimmed, ";") {
+			endIdx = i + 1
+			foundSemicolon = true
+			break
+		}
+	}
+
+	if !foundSemicolon {
+		endIdx = len(lines)
+	}
+
+	sql := strings.Join(lines[startIdx:endIdx], "\n")
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(sql), ";"))
 }
 
 func ValidateClaudeCode() error {
