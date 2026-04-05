@@ -38,12 +38,33 @@ func BuildSystemPrompt(schema SchemaContext) string {
 	return sb.String()
 }
 
+var typeAbbreviations = map[string]string{
+	"timestamp with time zone":    "timestamptz",
+	"timestamp without time zone": "timestamp",
+	"character varying":           "varchar",
+	"double precision":            "float8",
+	"integer":                     "int4",
+	"bigint":                      "int8",
+	"smallint":                    "int2",
+	"boolean":                     "bool",
+	"real":                        "float4",
+}
+
+func abbreviateType(dataType string) string {
+	for long, short := range typeAbbreviations {
+		if strings.HasPrefix(dataType, long) {
+			return short + strings.TrimPrefix(dataType, long)
+		}
+	}
+	return dataType
+}
+
 func formatTableDef(table TableDef) string {
 	var cols []string
 	fkMap := buildFKMap(table.ForeignKeys)
 
 	for _, col := range table.Columns {
-		entry := fmt.Sprintf("%s[%s", col.Name, col.DataType)
+		entry := fmt.Sprintf("%s[%s", col.Name, abbreviateType(col.DataType))
 		var flags []string
 		if col.IsPK {
 			flags = append(flags, "PK")
@@ -52,9 +73,6 @@ func formatTableDef(table TableDef) string {
 			if ref, ok := fkMap[col.Name]; ok {
 				flags = append(flags, "FK->"+ref)
 			}
-		}
-		if col.Nullable {
-			flags = append(flags, "nullable")
 		}
 		if len(flags) > 0 {
 			entry += "," + strings.Join(flags, ",")

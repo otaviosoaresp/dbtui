@@ -51,6 +51,44 @@ func TestBuildSystemPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "PostgreSQL") {
 		t.Error("prompt should mention PostgreSQL")
 	}
+	if strings.Contains(prompt, "nullable") {
+		t.Error("prompt should not contain nullable flag (optimization)")
+	}
+	if strings.Contains(prompt, "id[integer") {
+		t.Error("integer should be abbreviated to int4")
+	}
+	if !strings.Contains(prompt, "id[int4") {
+		t.Error("prompt should use abbreviated type int4")
+	}
+}
+
+func TestAbbreviateType(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"timestamp with time zone", "timestamptz"},
+		{"timestamp without time zone", "timestamp"},
+		{"character varying(255)", "varchar(255)"},
+		{"character varying", "varchar"},
+		{"double precision", "float8"},
+		{"integer", "int4"},
+		{"bigint", "int8"},
+		{"smallint", "int2"},
+		{"boolean", "bool"},
+		{"text", "text"},
+		{"numeric", "numeric"},
+		{"uuid", "uuid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := abbreviateType(tt.input)
+			if result != tt.expected {
+				t.Errorf("abbreviateType(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
 }
 
 func TestBuildSystemPromptEmptySchema(t *testing.T) {

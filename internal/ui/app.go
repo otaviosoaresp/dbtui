@@ -103,6 +103,7 @@ type App struct {
 	aiProvider    ai.Provider
 	aiLoading     bool
 	aiCancel      context.CancelFunc
+	aiSchemaCache *ai.SchemaContext
 }
 
 func (a *App) dg() *DataGrid {
@@ -1233,6 +1234,7 @@ func (a App) handleSchemaLoaded(msg SchemaLoadedMsg) (tea.Model, tea.Cmd) {
 	}
 
 	a.graph = msg.Graph
+	a.aiSchemaCache = nil
 	a.fkPreview.SetGraph(&a.graph)
 	names := msg.Graph.TableNames()
 
@@ -1838,6 +1840,9 @@ func (a App) handleAIPreviewAction(msg AIPreviewActionMsg) (tea.Model, tea.Cmd) 
 }
 
 func (a *App) buildSchemaContext() ai.SchemaContext {
+	if a.aiSchemaCache != nil {
+		return *a.aiSchemaCache
+	}
 	var tables []ai.TableDef
 	for name, info := range a.graph.Tables {
 		tableDef := ai.TableDef{Name: name}
@@ -1859,7 +1864,9 @@ func (a *App) buildSchemaContext() ai.SchemaContext {
 		}
 		tables = append(tables, tableDef)
 	}
-	return ai.SchemaContext{Tables: tables, EnumValues: a.graph.EnumValues}
+	ctx := ai.SchemaContext{Tables: tables, EnumValues: a.graph.EnumValues}
+	a.aiSchemaCache = &ctx
+	return ctx
 }
 
 func buildPKFromRow(columns []string, values []string, graph *schema.SchemaGraph, tableName string) PKValue {
