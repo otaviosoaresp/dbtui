@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1749,10 +1750,39 @@ func (a App) handlePaletteSelect(msg PaletteSelectMsg) (tea.Model, tea.Cmd) {
 			a.statusMsg = "No AI history yet"
 			return a, nil
 		}
-		last := history[len(history)-1]
-		a.statusMsg = fmt.Sprintf("Last: %s", truncateForStatus(last.Prompt, 60))
+		actions := make([]PaletteAction, len(history))
+		for i := len(history) - 1; i >= 0; i-- {
+			entry := history[i]
+			label := entry.Prompt
+			if len(label) > 60 {
+				label = label[:57] + "..."
+			}
+			actions[len(history)-1-i] = PaletteAction{
+				Label:    label,
+				Category: "History",
+				ID:       fmt.Sprintf("ai_history_%d", i),
+			}
+		}
+		a.palette.SetActions(actions)
+		a.palette.Show(a.width, a.height)
 		return a, nil
 	}
+
+	if strings.HasPrefix(msg.ActionID, "ai_history_") {
+		idxStr := strings.TrimPrefix(msg.ActionID, "ai_history_")
+		idx, err := strconv.Atoi(idxStr)
+		if err != nil {
+			return a, nil
+		}
+		history := config.LoadAIHistory()
+		if idx < 0 || idx >= len(history) {
+			return a, nil
+		}
+		entry := history[idx]
+		a.aiPreview.Show(entry.Prompt, entry.SQL, ai.TokenUsage{}, a.width, a.height)
+		return a, nil
+	}
+
 	return a, nil
 }
 
