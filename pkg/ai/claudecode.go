@@ -3,6 +3,7 @@ package ai
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -28,7 +29,11 @@ func (p *ClaudeCodeProvider) GenerateSQL(ctx context.Context, req SQLRequest) (S
 
 	output, err := cmd.Output()
 	if err != nil {
-		return SQLResponse{}, fmt.Errorf("claude-code execution failed: %w", err)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return SQLResponse{}, fmt.Errorf("claude CLI failed (exit %d): %s", exitErr.ExitCode(), strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return SQLResponse{}, fmt.Errorf("claude CLI execution failed: %w", err)
 	}
 
 	raw := strings.TrimSpace(string(output))

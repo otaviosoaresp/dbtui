@@ -474,6 +474,16 @@ func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, tea.Quit
 	}
 
+	if a.aiLoading && msg.String() == "esc" {
+		if a.aiCancel != nil {
+			a.aiCancel()
+		}
+		a.aiLoading = false
+		a.aiCancel = nil
+		a.statusMsg = "AI generation cancelled"
+		return a, nil
+	}
+
 	if a.dg() != nil && a.dg().IsExpanding() {
 		cmd := a.updateDG(msg)
 		return a, cmd
@@ -916,6 +926,7 @@ func (a App) handleModalKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.mode = ModeNormal
 		a.filterInput.Deactivate()
 		a.commandLine.Deactivate()
+		a.aiPrompt.Deactivate()
 		return a, nil
 	}
 
