@@ -18,6 +18,7 @@ type DataGrid struct {
 	pool         *pgxpool.Pool
 	table        widgets.Table
 	tableName    string
+	rawSQL       string
 	graph        *schema.SchemaGraph
 	offset       int
 	total        int
@@ -174,6 +175,14 @@ func (dg *DataGrid) SetQueryResult(columns []string, rows [][]string, total int)
 	dg.total = total
 	dg.tableName = "query"
 	dg.table.SetData(columns, rows)
+}
+
+func (dg *DataGrid) SetRawSQL(sql string) {
+	dg.rawSQL = sql
+}
+
+func (dg *DataGrid) IsRawQuery() bool {
+	return dg.rawSQL != ""
 }
 
 func (dg *DataGrid) JumpToColumn(name string) {
@@ -397,10 +406,16 @@ func (dg DataGrid) loadPageCmd() tea.Cmd {
 	tableName := dg.tableName
 	offset := dg.offset
 	pool := dg.pool
+	rawSQL := dg.rawSQL
 	filters := make([]db.FilterClause, len(dg.filters))
 	copy(filters, dg.filters)
 	orders := make([]db.OrderClause, len(dg.orders))
 	copy(orders, dg.orders)
+
+	if rawSQL != "" {
+		return dg.loadRawQueryPageCmd(pool, rawSQL, offset, filters, orders)
+	}
+
 	return func() tea.Msg {
 		result, err := db.QueryTableData(context.Background(), pool, tableName, offset, pageSize, filters, orders)
 		if err != nil {
@@ -408,6 +423,21 @@ func (dg DataGrid) loadPageCmd() tea.Cmd {
 		}
 		return TableDataLoadedMsg{
 			Table:   tableName,
+			Columns: result.Columns,
+			Rows:    result.Rows,
+			Total:   result.Total,
+		}
+	}
+}
+
+func (dg DataGrid) loadRawQueryPageCmd(pool *pgxpool.Pool, rawSQL string, offset int, filters []db.FilterClause, orders []db.OrderClause) tea.Cmd {
+	return func() tea.Msg {
+		result, err := db.QueryRawWithPagination(context.Background(), pool, rawSQL, offset, pageSize, filters, orders)
+		if err != nil {
+			return TableDataLoadedMsg{Table: "query", Err: err}
+		}
+		return TableDataLoadedMsg{
+			Table:   "query",
 			Columns: result.Columns,
 			Rows:    result.Rows,
 			Total:   result.Total,

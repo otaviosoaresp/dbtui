@@ -5,6 +5,7 @@ import (
 
 	"github.com/otaviosoaresp/dbtui/internal/db"
 	"github.com/otaviosoaresp/dbtui/internal/schema"
+	"github.com/otaviosoaresp/dbtui/pkg/ai"
 )
 
 type SchemaLoadedMsg struct {
@@ -85,3 +86,10 @@ type EditorQueryResultMsg struct {
 }
 
 type SwitchConnectionMsg struct{}
+
+type AIResponseMsg struct {
+	Prompt string
+	SQL    string
+	Usage  ai.TokenUsage
+	Err    error
+}

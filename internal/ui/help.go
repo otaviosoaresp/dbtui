@@ -112,6 +112,9 @@ func (h *HelpOverlay) buildLines() {
 			{"a", "Add new row (form)"},
 			{"A", "Duplicate current row (form)"},
 		}},
+		{"AI", []struct{ k, d string }{
+			{"P", "Open command palette"},
+		}},
 		{"Other", []struct{ k, d string }{
 			{"C", "Switch database connection"},
 			{"R", "Refresh schema from database"},

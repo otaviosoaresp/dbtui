@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/otaviosoaresp/dbtui/internal/config"
 	"github.com/otaviosoaresp/dbtui/internal/db"
 	"github.com/otaviosoaresp/dbtui/internal/schema"
+	"github.com/otaviosoaresp/dbtui/pkg/ai"
 )
 
 type focusedPanel int
@@ -38,6 +40,7 @@ const (
 	ModeFilter
 	ModeCommand
 	ModeInsert
+	ModeAIPrompt
 )
 
 func (m AppMode) String() string {
@@ -48,6 +51,8 @@ func (m AppMode) String() string {
 		return "COMMAND"
 	case ModeInsert:
 		return "INSERT"
+	case ModeAIPrompt:
+		return "AI"
 	default:
 		return "NORMAL"
 	}
@@ -93,6 +98,13 @@ type App struct {
 	statusMsg     string
 	disconnected  bool
 	reconnAttempt int
+	palette       Palette
+	aiPrompt      AIPrompt
+	aiPreview     AIPreview
+	aiProvider    ai.Provider
+	aiLoading     bool
+	aiCancel      context.CancelFunc
+	aiSchemaCache *ai.SchemaContext
 }
 
 func (a *App) dg() *DataGrid {
@@ -116,6 +128,13 @@ func NewApp(pool *pgxpool.Pool) App {
 	tl.Focus()
 	fp := NewFKPreview(pool)
 
+	var aiProvider ai.Provider
+	path := ai.DefaultConfigPath()
+	cfg, err := ai.LoadConfig(path)
+	if err == nil {
+		aiProvider = ai.NewProvider(cfg)
+	}
+
 	return App{
 		pool:         pool,
 		tableList:    tl,
@@ -125,6 +144,9 @@ func NewApp(pool *pgxpool.Pool) App {
 		commandLine:  NewCommandLine(),
 		sqlEditor:    NewSQLEditor(),
 		columnPicker: NewColumnPicker(),
+		palette:      NewPalette(),
+		aiPrompt:     NewAIPrompt(),
+		aiProvider:   aiProvider,
 		focus:        panelTableList,
 		loading:      true,
 		statusMsg:    "Loading schema...",
@@ -231,6 +253,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.help = a.help.Update(msg)
 			}
 			return a, nil
+		}
+		if a.palette.Visible() {
+			var cmd tea.Cmd
+			a.palette, cmd = a.palette.Update(msg)
+			return a, cmd
+		}
+		if a.aiPreview.Visible() {
+			var cmd tea.Cmd
+			a.aiPreview, cmd = a.aiPreview.Update(msg)
+			return a, cmd
 		}
 		if a.filterList.Visible() {
 			return a.handleFilterListKey(msg)
@@ -350,6 +382,18 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return a, nil
+
+	case PaletteSelectMsg:
+		return a.handlePaletteSelect(msg)
+
+	case AIPromptSubmitMsg:
+		return a.handleAIPromptSubmit(msg)
+
+	case AIResponseMsg:
+		return a.handleAIResponse(msg)
+
+	case AIPreviewActionMsg:
+		return a.handleAIPreviewAction(msg)
 	}
 
 	return a.routeToFocused(msg)
@@ -428,6 +472,16 @@ func (a *App) triggerFKPreview(existingCmd tea.Cmd) tea.Cmd {
 func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return a, tea.Quit
+	}
+
+	if a.aiLoading && msg.String() == "esc" {
+		if a.aiCancel != nil {
+			a.aiCancel()
+		}
+		a.aiLoading = false
+		a.aiCancel = nil
+		a.statusMsg = "AI generation cancelled"
+		return a, nil
 	}
 
 	if a.dg() != nil && a.dg().IsExpanding() {
@@ -578,6 +632,10 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		}
+	case "P":
+		a.palette.SetActions(a.buildPaletteActions())
+		a.palette.Show(a.width, a.height)
+		return a, nil
 	case "enter":
 		if a.focus == panelDataGrid && a.dg() != nil {
 			return a.handleFollowFK()
@@ -868,6 +926,7 @@ func (a App) handleModalKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.mode = ModeNormal
 		a.filterInput.Deactivate()
 		a.commandLine.Deactivate()
+		a.aiPrompt.Deactivate()
 		return a, nil
 	}
 
@@ -878,6 +937,8 @@ func (a App) handleModalKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.handleCommandMode(msg)
 	case ModeInsert:
 		return a.handleInsertMode(msg)
+	case ModeAIPrompt:
+		return a.handleAIPromptMode(msg)
 	}
 
 	return a, nil
@@ -1185,6 +1246,7 @@ func (a App) handleSchemaLoaded(msg SchemaLoadedMsg) (tea.Model, tea.Cmd) {
 	}
 
 	a.graph = msg.Graph
+	a.aiSchemaCache = nil
 	a.fkPreview.SetGraph(&a.graph)
 	names := msg.Graph.TableNames()
 
@@ -1218,6 +1280,7 @@ func (a App) handleRawQueryResult(msg RawQueryResultMsg) (tea.Model, tea.Cmd) {
 
 	if a.dg() != nil {
 		a.dg().SetQueryResult(msg.Result.Columns, msg.Result.Rows, msg.Result.Total)
+		a.dg().SetRawSQL(msg.SQL)
 	}
 	a.statusMsg = fmt.Sprintf("Query result: %d rows", msg.Result.Total)
 	return a, nil
@@ -1298,6 +1361,12 @@ func (a App) View() string {
 	if a.help.Visible() {
 		return a.help.View()
 	}
+	if a.palette.Visible() {
+		return a.palette.View()
+	}
+	if a.aiPreview.Visible() {
+		return a.aiPreview.View()
+	}
 	if a.filterList.Visible() {
 		return a.filterList.View()
 	}
@@ -1360,6 +1429,9 @@ func (a App) View() string {
 	if a.mode == ModeInsert {
 		sections = append(sections, a.renderEditInput())
 	}
+	if a.mode == ModeAIPrompt && a.aiPrompt.Active() {
+		sections = append(sections, a.aiPrompt.View(a.width))
+	}
 	if a.fkPreview.Visible() {
 		sections = append(sections, a.fkPreview.View())
 	}
@@ -1375,6 +1447,12 @@ func (a App) renderStatusBar() string {
 	modeStyle := lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("3")).Bold(true)
 
 	var hints []string
+
+	if a.aiLoading {
+		hints = append(hints, modeStyle.Render(" -- AI GENERATING -- "))
+		hints = append(hints, keyStyle.Render("[Esc]")+descStyle.Render(" Cancel"))
+		return bgStyle.Render(lipgloss.JoinHorizontal(lipgloss.Left, strings.Join(hints, " ")+" "+descStyle.Render(a.statusMsg)))
+	}
 
 	if a.deleteConfirm {
 		hints = append(hints, modeStyle.Render(" -- DELETE CONFIRM -- "))
@@ -1653,6 +1731,184 @@ func truncateForStatus(s string, max int) string {
 		return s
 	}
 	return s[:max-3] + "..."
+}
+
+func (a *App) buildPaletteActions() []PaletteAction {
+	return []PaletteAction{
+		{Label: "AI: Generate SQL", Category: "AI", ID: "ai_generate"},
+		{Label: "AI: History", Category: "AI", ID: "ai_history"},
+		{Label: "AI: Configure Provider", Category: "Config", ID: "ai_config"},
+	}
+}
+
+func (a App) handlePaletteSelect(msg PaletteSelectMsg) (tea.Model, tea.Cmd) {
+	switch msg.ActionID {
+	case "ai_generate":
+		if a.aiProvider == nil {
+			a.statusMsg = "AI not configured -- edit ~/.config/dbtui/ai.yml"
+			return a, nil
+		}
+		a.aiPrompt.SetWidth(a.width)
+		a.aiPrompt.Activate()
+		a.mode = ModeAIPrompt
+		return a, nil
+	case "ai_config":
+		a.statusMsg = "Edit ~/.config/dbtui/ai.yml (providers: claude-code, openrouter, ollama)"
+		return a, nil
+	case "ai_history":
+		history := config.LoadAIHistory()
+		if len(history) == 0 {
+			a.statusMsg = "No AI history yet"
+			return a, nil
+		}
+		actions := make([]PaletteAction, len(history))
+		for i := len(history) - 1; i >= 0; i-- {
+			entry := history[i]
+			label := entry.Prompt
+			if len(label) > 60 {
+				label = label[:57] + "..."
+			}
+			actions[len(history)-1-i] = PaletteAction{
+				Label:    label,
+				Category: "History",
+				ID:       fmt.Sprintf("ai_history_%d", i),
+			}
+		}
+		a.palette.SetActions(actions)
+		a.palette.Show(a.width, a.height)
+		return a, nil
+	}
+
+	if strings.HasPrefix(msg.ActionID, "ai_history_") {
+		idxStr := strings.TrimPrefix(msg.ActionID, "ai_history_")
+		idx, err := strconv.Atoi(idxStr)
+		if err != nil {
+			return a, nil
+		}
+		history := config.LoadAIHistory()
+		if idx < 0 || idx >= len(history) {
+			return a, nil
+		}
+		entry := history[idx]
+		a.aiPreview.Show(entry.Prompt, entry.SQL, ai.TokenUsage{}, a.width, a.height)
+		return a, nil
+	}
+
+	return a, nil
+}
+
+func (a App) handleAIPromptMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "esc" {
+		a.mode = ModeNormal
+		a.aiPrompt.Deactivate()
+		return a, nil
+	}
+
+	var cmd tea.Cmd
+	a.aiPrompt, cmd = a.aiPrompt.Update(msg)
+	if !a.aiPrompt.Active() {
+		a.mode = ModeNormal
+	}
+	return a, cmd
+}
+
+func (a App) handleAIPromptSubmit(msg AIPromptSubmitMsg) (tea.Model, tea.Cmd) {
+	a.mode = ModeNormal
+	a.aiLoading = true
+	a.statusMsg = "Generating SQL..."
+
+	provider := a.aiProvider
+	prompt := msg.Prompt
+	schemaCtx := a.buildSchemaContext()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	a.aiCancel = cancel
+
+	return a, func() tea.Msg {
+		defer cancel()
+		resp, err := provider.GenerateSQL(ctx, ai.SQLRequest{
+			Prompt: prompt,
+			Schema: schemaCtx,
+		})
+		if err != nil {
+			return AIResponseMsg{Prompt: prompt, Err: err}
+		}
+		if resp.Error != "" {
+			return AIResponseMsg{Prompt: prompt, Err: fmt.Errorf("%s", resp.Error)}
+		}
+		return AIResponseMsg{Prompt: prompt, SQL: resp.SQL, Usage: resp.Usage}
+	}
+}
+
+func (a App) handleAIResponse(msg AIResponseMsg) (tea.Model, tea.Cmd) {
+	a.aiLoading = false
+	a.aiCancel = nil
+
+	if msg.Err != nil {
+		a.statusMsg = fmt.Sprintf("AI error: %v", msg.Err)
+		return a, nil
+	}
+
+	config.AppendAIHistory(config.AIHistoryEntry{
+		Prompt:    msg.Prompt,
+		SQL:       msg.SQL,
+		Timestamp: time.Now(),
+	})
+
+	a.aiPreview.Show(msg.Prompt, msg.SQL, msg.Usage, a.width, a.height)
+	a.statusMsg = "SQL generated"
+	return a, nil
+}
+
+func (a App) handleAIPreviewAction(msg AIPreviewActionMsg) (tea.Model, tea.Cmd) {
+	switch msg.Action {
+	case AIPreviewExecute:
+		return a.executeRawSQL(msg.SQL)
+	case AIPreviewEdit:
+		a.sqlEditor.Open(msg.SQL, "", a.pool, a.width, a.height-2)
+		return a, nil
+	case AIPreviewSave:
+		if msg.SaveName != "" {
+			if err := SaveScript(msg.SaveName, msg.SQL); err != nil {
+				a.statusMsg = fmt.Sprintf("Save error: %v", err)
+			} else {
+				a.statusMsg = fmt.Sprintf("Saved: %s.sql", msg.SaveName)
+				a.scriptList.Refresh()
+			}
+		}
+		return a, nil
+	}
+	return a, nil
+}
+
+func (a *App) buildSchemaContext() ai.SchemaContext {
+	if a.aiSchemaCache != nil {
+		return *a.aiSchemaCache
+	}
+	var tables []ai.TableDef
+	for name, info := range a.graph.Tables {
+		tableDef := ai.TableDef{Name: name}
+		for _, col := range info.Columns {
+			tableDef.Columns = append(tableDef.Columns, ai.ColumnDef{
+				Name:     col.Name,
+				DataType: col.DataType,
+				IsPK:     col.IsPK,
+				IsFK:     col.IsFK,
+				Nullable: col.IsNullable,
+			})
+		}
+		for _, fk := range a.graph.FKsForTable(name) {
+			tableDef.ForeignKeys = append(tableDef.ForeignKeys, ai.FKDef{
+				Columns:           fk.SourceColumns,
+				ReferencedTable:   qualifiedRefTable(fk),
+				ReferencedColumns: fk.ReferencedColumns,
+			})
+		}
+		tables = append(tables, tableDef)
+	}
+	ctx := ai.SchemaContext{Tables: tables, EnumValues: a.graph.EnumValues}
+	a.aiSchemaCache = &ctx
+	return ctx
 }
 
 func buildPKFromRow(columns []string, values []string, graph *schema.SchemaGraph, tableName string) PKValue {

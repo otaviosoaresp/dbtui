@@ -26,6 +26,7 @@ Navigate relational data by following FK references, previewing linked rows inli
 - **Schema Introspection** -- Loads FK relationships, composite keys, self-referential FKs, views, and materialized views via `pg_catalog`.
 - **Responsive Layout** -- Adapts to terminal width. Table list collapses in narrow terminals.
 - **Connection Resilience** -- Auto-reconnects with exponential backoff if the connection drops.
+- **AI SQL Generation** -- Press `P` to open the command palette and generate SQL from natural language. Supports Claude Code, OpenRouter, and Ollama as AI providers. Generated SQL can be executed, edited, or saved as a script. Prompt history is persisted across sessions.
 
 ## Install
 
@@ -134,6 +135,12 @@ dbtui
 | `y` | Copy cell value |
 | `Y` | Copy row (or selected rows, tab-separated) |
 
+### AI
+
+| Key | Action |
+|-----|--------|
+| `P` | Open command palette (AI generate, history, config) |
+
 ### Other
 
 | Key | Action |
@@ -157,6 +164,41 @@ Press `:` to enter command mode. Available commands:
 | `bd` | Close current buffer |
 
 Command history persists across sessions. `Up`/`Down` navigates history, `Tab` completes script names.
+
+## AI SQL Generation
+
+Generate SQL queries from natural language using configurable AI providers.
+
+### Setup
+
+Create `~/.config/dbtui/ai.yml`:
+
+```yaml
+# Option 1: Claude Code (requires claude CLI installed)
+provider: claude-code
+
+# Option 2: OpenRouter (supports many models)
+provider: openrouter
+openrouter:
+  api_key: "sk-or-..."
+  model: "anthropic/claude-sonnet-4"
+
+# Option 3: Ollama (local, free)
+provider: ollama
+ollama:
+  url: "http://localhost:11434"
+  model: "llama3"
+```
+
+### Usage
+
+1. Press `P` to open the command palette
+2. Select "AI: Generate SQL"
+3. Type your request in natural language (e.g., "show orders from the last 30 days")
+4. Review the generated SQL in the preview modal
+5. Press `Enter` to execute, `e` to edit in SQL editor, `s` to save as script, or `Esc` to discard
+
+The AI receives your database schema (tables, columns, types, FKs, enum values) as context to generate accurate queries. Prompt history is persisted and accessible via "AI: History" in the palette.
 
 ## Supported Databases
 
@@ -197,11 +239,16 @@ internal/ui/sql_editor.go          -- multiline SQL editor (bubbles/textarea)
 internal/ui/record_view.go         -- vertical record view overlay
 internal/ui/row_form.go            -- vertical form for add/duplicate row
 internal/ui/column_picker.go       -- fuzzy column jump overlay
+internal/ui/palette.go             -- command palette (P keybinding)
+internal/ui/ai_prompt.go           -- AI natural language input
+internal/ui/ai_preview.go          -- AI SQL preview modal
 internal/ui/help.go                -- help overlay
 internal/ui/connect_form.go        -- connection form
 internal/ui/connection_list.go     -- saved connections list
 internal/ui/root.go                -- connection -> app transition
 internal/ui/widgets/table.go       -- table widget (selection, FK highlight, indicators)
+internal/config/ai_history.go      -- AI prompt history persistence
+pkg/ai/                            -- AI provider SDK (Claude Code, OpenRouter, Ollama)
 ```
 
 Built with [BubbleTea](https://github.com/charmbracelet/bubbletea), [LipGloss](https://github.com/charmbracelet/lipgloss), and [pgx](https://github.com/jackc/pgx).
