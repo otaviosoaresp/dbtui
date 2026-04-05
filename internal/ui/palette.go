@@ -79,12 +79,12 @@ func (p Palette) Update(msg tea.KeyMsg) (Palette, tea.Cmd) {
 			}
 		}
 		return p, nil
-	case "up", "ctrl+k":
+	case "up", "ctrl+p":
 		if p.cursor > 0 {
 			p.cursor--
 		}
 		return p, nil
-	case "down", "ctrl+j":
+	case "down", "ctrl+n":
 		if p.cursor < len(p.filtered)-1 {
 			p.cursor++
 		}
