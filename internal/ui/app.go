@@ -614,10 +614,6 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.help.Toggle()
 		return a, nil
 	case "p":
-		a.palette.SetActions(a.buildPaletteActions())
-		a.palette.Show(a.width, a.height)
-		return a, nil
-	case "P":
 		if a.focus == panelDataGrid && a.dg() != nil {
 			a.fkPreview.Toggle()
 			a.updateLayout()
@@ -626,6 +622,10 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		}
+	case "P":
+		a.palette.SetActions(a.buildPaletteActions())
+		a.palette.Show(a.width, a.height)
+		return a, nil
 	case "enter":
 		if a.focus == panelDataGrid && a.dg() != nil {
 			return a.handleFollowFK()
