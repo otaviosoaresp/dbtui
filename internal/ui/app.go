@@ -1268,6 +1268,7 @@ func (a App) handleRawQueryResult(msg RawQueryResultMsg) (tea.Model, tea.Cmd) {
 
 	if a.dg() != nil {
 		a.dg().SetQueryResult(msg.Result.Columns, msg.Result.Rows, msg.Result.Total)
+		a.dg().SetRawSQL(msg.SQL)
 	}
 	a.statusMsg = fmt.Sprintf("Query result: %d rows", msg.Result.Total)
 	return a, nil

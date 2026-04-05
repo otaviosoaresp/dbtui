@@ -554,6 +554,58 @@ func formatUUID(b [16]byte) string {
 	return string(buf[:])
 }
 
+func QueryRawWithPagination(ctx context.Context, pool *pgxpool.Pool, rawSQL string, offset, limit int, filters []FilterClause, orders []OrderClause) (QueryResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	baseQuery := fmt.Sprintf("(%s) AS _q", strings.TrimSuffix(strings.TrimSpace(rawSQL), ";"))
+
+	whereClause, whereArgs := buildWhereClause(filters)
+	orderClause := buildOrderClause(orders)
+
+	paramOffset := len(whereArgs) + 1
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s%s", baseQuery, whereClause)
+	var total int
+	if err := pool.QueryRow(ctx, countQuery, whereArgs...).Scan(&total); err != nil {
+		return QueryResult{}, fmt.Errorf("counting rows: %w", err)
+	}
+
+	dataQuery := fmt.Sprintf("SELECT * FROM %s%s%s LIMIT $%d OFFSET $%d",
+		baseQuery, whereClause, orderClause, paramOffset, paramOffset+1)
+	args := append(whereArgs, limit, offset)
+
+	rows, err := pool.Query(ctx, dataQuery, args...)
+	if err != nil {
+		return QueryResult{}, fmt.Errorf("querying data: %w", err)
+	}
+	defer rows.Close()
+
+	fieldDescs := rows.FieldDescriptions()
+	columns := make([]string, len(fieldDescs))
+	for i, fd := range fieldDescs {
+		columns[i] = fd.Name
+	}
+
+	var resultRows [][]string
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			return QueryResult{}, fmt.Errorf("reading row: %w", err)
+		}
+		row := make([]string, len(values))
+		for i, v := range values {
+			row[i] = formatValue(v)
+		}
+		resultRows = append(resultRows, row)
+	}
+
+	return QueryResult{
+		Columns: columns,
+		Rows:    resultRows,
+		Total:   total,
+	}, rows.Err()
+}
+
 func quoteIdent(name string) string {
 	if strings.Contains(name, ".") {
 		parts := strings.SplitN(name, ".", 2)
