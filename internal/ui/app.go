@@ -81,8 +81,10 @@ type App struct {
 	recordView    RecordView
 	columnPicker  ColumnPicker
 	bufferPicker  BufferPicker
-	leaderPending bool
-	leaderBuf     string
+	leaderRoot    *LeaderNode
+	leaderCurrent *LeaderNode
+	leaderPath    string
+	whichKey      WhichKey
 	editInput     textinput.Model
 	editColumn    string
 	editOriginal  string
@@ -148,6 +150,8 @@ func NewApp(pool *pgxpool.Pool) App {
 		sqlEditor:    NewSQLEditor(),
 		columnPicker: NewColumnPicker(),
 		bufferPicker: NewBufferPicker(),
+		leaderRoot:   buildLeaderRoot(),
+		whichKey:     NewWhichKey(),
 		palette:      NewPalette(),
 		aiPrompt:     NewAIPrompt(),
 		aiProvider:   aiProvider,
@@ -509,14 +513,14 @@ func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.handleModalKeyPress(msg)
 	}
 
-	if a.leaderPending {
+	if a.leaderCurrent != nil {
 		return a.handleLeaderKey(msg)
 	}
 
 	if msg.String() == " " {
-		a.leaderPending = true
-		a.leaderBuf = ""
-		a.statusMsg = "<leader> b:buffer  ?:help (esc cancel)"
+		a.leaderCurrent = a.leaderRoot
+		a.leaderPath = "<leader>"
+		a.whichKey.Show(a.leaderCurrent, a.leaderPath, a.width, a.height)
 		return a, nil
 	}
 
@@ -526,79 +530,45 @@ func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (a App) handleLeaderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if key == "esc" {
-		a.leaderPending = false
-		a.leaderBuf = ""
-		a.statusMsg = ""
+		a.resetLeader()
 		return a, nil
 	}
 
-	a.leaderBuf += key
-
-	switch a.leaderBuf {
-	case "?":
-		a.leaderPending = false
-		a.leaderBuf = ""
-		a.statusMsg = "leader: <space>b{b,d,n,p,1-9}=buffer ops"
-		return a, nil
-	case "b":
-		return a, nil
-	case "bb":
-		a.leaderPending = false
-		a.leaderBuf = ""
-		a.bufferPicker.Show(a.buffers, a.activeBuffer, a.width, a.height)
-		return a, nil
-	case "bd":
-		a.leaderPending = false
-		a.leaderBuf = ""
-		if len(a.buffers) <= 1 {
-			a.statusMsg = "Cannot close last buffer"
-			return a, nil
-		}
-		closed := a.buffers[a.activeBuffer].Name
-		a.closeActiveBuffer()
-		a.statusMsg = fmt.Sprintf("Closed: %s", closed)
-		return a, nil
-	case "bn":
-		a.leaderPending = false
-		a.leaderBuf = ""
-		if len(a.buffers) > 1 {
-			a.activeBuffer = (a.activeBuffer + 1) % len(a.buffers)
-			a.statusMsg = fmt.Sprintf("Buffer: %s [%d/%d]", a.buffers[a.activeBuffer].Name, a.activeBuffer+1, len(a.buffers))
-			a.updateLayout()
-		}
-		return a, nil
-	case "bp":
-		a.leaderPending = false
-		a.leaderBuf = ""
-		if len(a.buffers) > 1 {
-			a.activeBuffer = (a.activeBuffer - 1 + len(a.buffers)) % len(a.buffers)
-			a.statusMsg = fmt.Sprintf("Buffer: %s [%d/%d]", a.buffers[a.activeBuffer].Name, a.activeBuffer+1, len(a.buffers))
-			a.updateLayout()
-		}
-		return a, nil
-	}
-
-	if strings.HasPrefix(a.leaderBuf, "b") && len(a.leaderBuf) == 2 {
-		ch := a.leaderBuf[1]
-		if ch >= '1' && ch <= '9' {
-			idx := int(ch - '1')
-			a.leaderPending = false
-			a.leaderBuf = ""
-			if idx < len(a.buffers) {
-				a.activeBuffer = idx
-				a.statusMsg = fmt.Sprintf("Buffer: %s [%d/%d]", a.buffers[idx].Name, idx+1, len(a.buffers))
-				a.updateLayout()
-			} else {
-				a.statusMsg = fmt.Sprintf("No buffer at %d", idx+1)
+	if child := a.leaderCurrent.findChild(key); child != nil {
+		if child.Action != nil {
+			result := child.Action(&a)
+			a.resetLeader()
+			if result.StatusMsg != "" {
+				a.statusMsg = result.StatusMsg
 			}
-			return a, nil
+			return a, result.Cmd
 		}
+		a.leaderCurrent = child
+		a.leaderPath = a.leaderPath + " " + child.Key
+		a.whichKey.Show(a.leaderCurrent, a.leaderPath, a.width, a.height)
+		return a, nil
 	}
 
-	a.leaderPending = false
-	a.leaderBuf = ""
-	a.statusMsg = fmt.Sprintf("Unknown leader sequence: <space>%s", key)
+	if a.leaderCurrent.Digit != nil && len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
+		n := int(key[0] - '0')
+		result := a.leaderCurrent.Digit(&a, n)
+		a.resetLeader()
+		if result.StatusMsg != "" {
+			a.statusMsg = result.StatusMsg
+		}
+		return a, result.Cmd
+	}
+
+	a.resetLeader()
+	a.statusMsg = fmt.Sprintf("Unknown leader sequence: %s %s", a.leaderPath, key)
 	return a, nil
+}
+
+func (a *App) resetLeader() {
+	a.leaderCurrent = nil
+	a.leaderPath = ""
+	a.whichKey.Hide()
+	a.statusMsg = ""
 }
 
 func (a App) handleBufferPickerResult(result BufferPickerResult) App {
@@ -1570,7 +1540,45 @@ func (a App) View() string {
 	}
 
 	sections = append(sections, a.renderStatusBar())
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+	base := lipgloss.JoinVertical(lipgloss.Left, sections...)
+
+	if a.whichKey.Visible() {
+		return overlayBottom(base, a.whichKey.View(), a.width, a.height)
+	}
+	return base
+}
+
+func overlayBottom(base, overlay string, width, height int) string {
+	baseLines := strings.Split(base, "\n")
+	for len(baseLines) < height {
+		baseLines = append(baseLines, "")
+	}
+	if len(baseLines) > height {
+		baseLines = baseLines[:height]
+	}
+	overlayLines := strings.Split(overlay, "\n")
+	overlayHeight := len(overlayLines)
+	if overlayHeight >= height {
+		return overlay
+	}
+	overlayWidth := lipgloss.Width(overlay)
+	leftPad := (width - overlayWidth) / 2
+	if leftPad < 0 {
+		leftPad = 0
+	}
+	pad := strings.Repeat(" ", leftPad)
+	startY := height - overlayHeight - 1
+	if startY < 0 {
+		startY = 0
+	}
+	for i, line := range overlayLines {
+		y := startY + i
+		if y >= len(baseLines) {
+			break
+		}
+		baseLines[y] = pad + line
+	}
+	return strings.Join(baseLines, "\n")
 }
 
 func (a App) renderStatusBar() string {
