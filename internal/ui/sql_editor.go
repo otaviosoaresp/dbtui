@@ -44,6 +44,12 @@ type SQLEditor struct {
 	activeVar    int
 	editingVars  bool
 	pendingSQL   string
+	lastSQL      string
+	filters      []db.FilterClause
+	orders       []db.OrderClause
+	offset       int
+	filterInput  FilterInput
+	filtering    bool
 }
 
 func NewSQLEditor() SQLEditor {
@@ -54,6 +60,7 @@ func NewSQLEditor() SQLEditor {
 	return SQLEditor{
 		editor:      ta,
 		resultTable: widgets.NewTable(widgets.DefaultConfig()),
+		filterInput: NewFilterInput(),
 	}
 }
 
@@ -70,6 +77,11 @@ func (se *SQLEditor) Open(sql, scriptName string, pool *pgxpool.Pool, width, hei
 	se.executing = false
 	se.result = nil
 	se.resultErr = nil
+	se.lastSQL = ""
+	se.filters = nil
+	se.orders = nil
+	se.offset = 0
+	se.filtering = false
 
 	editorHeight := se.editorHeight()
 	se.editor.SetWidth(width - 6)
@@ -98,6 +110,11 @@ func (se *SQLEditor) Close() {
 	se.focusResult = false
 	se.result = nil
 	se.resultErr = nil
+	se.lastSQL = ""
+	se.filters = nil
+	se.orders = nil
+	se.offset = 0
+	se.filtering = false
 	se.editor.Blur()
 }
 
@@ -231,6 +248,10 @@ func (se SQLEditor) Update(msg tea.KeyMsg) (SQLEditor, tea.Cmd) {
 		return se.updateSaving(msg)
 	}
 
+	if se.filtering {
+		return se.updateFiltering(msg)
+	}
+
 	if se.focusResult {
 		return se.updateResultFocus(msg)
 	}
@@ -250,6 +271,10 @@ func (se SQLEditor) Update(msg tea.KeyMsg) (SQLEditor, tea.Cmd) {
 			return se, nil
 		}
 		se.executing = true
+		se.lastSQL = sql
+		se.filters = nil
+		se.orders = nil
+		se.offset = 0
 		pool := se.pool
 		return se, func() tea.Msg {
 			result, err := db.ExecuteRawQuery(context.Background(), pool, sql)
@@ -298,11 +323,67 @@ func (se SQLEditor) updateResultFocus(msg tea.KeyMsg) (SQLEditor, tea.Cmd) {
 			return se, nil
 		}
 		se.executing = true
+		se.lastSQL = sql
+		se.filters = nil
+		se.orders = nil
+		se.offset = 0
 		pool := se.pool
 		return se, func() tea.Msg {
 			result, err := db.ExecuteRawQuery(context.Background(), pool, sql)
 			return EditorQueryResultMsg{Result: result, Err: err}
 		}
+	case "f":
+		col := se.resultTable.CursorColumnName()
+		if col == "" {
+			return se, nil
+		}
+		se.filtering = true
+		se.filterInput.Activate(col)
+		for _, fc := range se.filters {
+			if fc.Column == col {
+				se.filterInput.SetValue(fc.Operator, fc.Value)
+				break
+			}
+		}
+		return se, nil
+	case "x":
+		col := se.resultTable.CursorColumnName()
+		if col == "" {
+			return se, nil
+		}
+		removed := false
+		filtered := se.filters[:0]
+		for _, fc := range se.filters {
+			if fc.Column == col {
+				removed = true
+				continue
+			}
+			filtered = append(filtered, fc)
+		}
+		if !removed {
+			return se, nil
+		}
+		se.filters = filtered
+		return se, se.reExecute()
+	case "F":
+		if len(se.filters) == 0 {
+			return se, nil
+		}
+		se.filters = nil
+		return se, se.reExecute()
+	case "o":
+		col := se.resultTable.CursorColumnName()
+		if col == "" {
+			return se, nil
+		}
+		se.toggleOrder(col)
+		return se, se.reExecute()
+	case "O":
+		if len(se.orders) == 0 {
+			return se, nil
+		}
+		se.orders = nil
+		return se, se.reExecute()
 	case "j", "down":
 		se.resultTable.MoveDown()
 	case "k", "up":
@@ -395,6 +476,66 @@ func (se SQLEditor) updateSaving(msg tea.KeyMsg) (SQLEditor, tea.Cmd) {
 	}
 }
 
+func (se *SQLEditor) toggleOrder(col string) {
+	for i, o := range se.orders {
+		if o.Column != col {
+			continue
+		}
+		if o.Direction == "ASC" {
+			se.orders[i].Direction = "DESC"
+			return
+		}
+		se.orders = append(se.orders[:i], se.orders[i+1:]...)
+		return
+	}
+	se.orders = append(se.orders, db.OrderClause{Column: col, Direction: "ASC"})
+}
+
+func (se *SQLEditor) reExecute() tea.Cmd {
+	if se.lastSQL == "" || se.pool == nil {
+		return nil
+	}
+	se.executing = true
+	se.offset = 0
+	pool := se.pool
+	sql := se.lastSQL
+	filters := append([]db.FilterClause(nil), se.filters...)
+	orders := append([]db.OrderClause(nil), se.orders...)
+	return func() tea.Msg {
+		result, err := db.QueryRawWithPagination(context.Background(), pool, sql, 0, pageSize, filters, orders)
+		return EditorQueryResultMsg{Result: result, Err: err}
+	}
+}
+
+func (se SQLEditor) updateFiltering(msg tea.KeyMsg) (SQLEditor, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		se.filtering = false
+		se.filterInput.Deactivate()
+		return se, nil
+	case "enter":
+		col := se.filterInput.Column()
+		clause := ParseFilterInput(col, se.filterInput.Value())
+		replaced := false
+		for i, fc := range se.filters {
+			if fc.Column == col {
+				se.filters[i] = clause
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			se.filters = append(se.filters, clause)
+		}
+		se.filtering = false
+		se.filterInput.Deactivate()
+		return se, se.reExecute()
+	}
+	var cmd tea.Cmd
+	se.filterInput, cmd = se.filterInput.Update(msg)
+	return se, cmd
+}
+
 func (se SQLEditor) View() string {
 	if !se.visible || se.width == 0 || se.height == 0 {
 		return ""
@@ -432,6 +573,8 @@ func (se SQLEditor) View() string {
 		footer = dimStyle.Render("[Tab/Shift+Tab] Nav  [Enter] Next/Execute  [Esc] Cancel")
 	} else if se.saving {
 		footer = saveStyle.Render("Save as: ") + se.saveInput + "_"
+	} else if se.filtering {
+		footer = se.filterInput.View(se.width - 8)
 	} else {
 		var hints []string
 		hints = append(hints, "[Ctrl+E] Execute", "[Ctrl+S] Save")
@@ -441,6 +584,9 @@ func (se SQLEditor) View() string {
 				focusLabel = "[Tab] Editor"
 			}
 			hints = append(hints, focusLabel)
+			if se.focusResult {
+				hints = append(hints, "[f] Filter", "[o] Order", "[x] Rm Filter", "[F/O] Clear")
+			}
 		}
 		hints = append(hints, "[Esc] Close")
 		footer = dimStyle.Render(strings.Join(hints, "  "))
@@ -482,7 +628,18 @@ func (se SQLEditor) renderResultPanel() string {
 		return ""
 	}
 
-	resultTitle := titleStyle.Render(fmt.Sprintf("  Result (%d rows)", se.result.Total))
+	titleParts := []string{fmt.Sprintf("  Result (%d rows)", se.result.Total)}
+	if len(se.filters) > 0 {
+		titleParts = append(titleParts, fmt.Sprintf("filters: %d", len(se.filters)))
+	}
+	if len(se.orders) > 0 {
+		var ords []string
+		for _, o := range se.orders {
+			ords = append(ords, fmt.Sprintf("%s %s", o.Column, o.Direction))
+		}
+		titleParts = append(titleParts, "order: "+strings.Join(ords, ", "))
+	}
+	resultTitle := titleStyle.Render(strings.Join(titleParts, "  "))
 	tableView := se.resultTable.View()
 
 	_, rh := se.resultDimensions()
