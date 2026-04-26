@@ -94,6 +94,7 @@ func buildLeaderRoot() *LeaderNode {
 		Desc: "<leader>",
 		Children: []*LeaderNode{
 			bufferNode,
+			tableNode(),
 			{
 				Key: "r", Desc: "refresh schema", Group: "database",
 				Action: func(a *App) LeaderActionResult {
@@ -126,6 +127,38 @@ func buildLeaderRoot() *LeaderNode {
 				Action: func(a *App) LeaderActionResult {
 					a.help.SetSize(a.width, a.height)
 					a.help.Toggle()
+					return LeaderActionResult{}
+				},
+			},
+		},
+	}
+}
+
+func tableNode() *LeaderNode {
+	return &LeaderNode{
+		Key:  "t",
+		Desc: "+table/sidebar",
+		Children: []*LeaderNode{
+			{
+				Key: "t", Desc: "toggle sidebar", Group: "layout",
+				Action: func(a *App) LeaderActionResult {
+					a.sidebarCollapsed = !a.sidebarCollapsed
+					a.updateLayout()
+					state := "expanded"
+					if a.sidebarCollapsed {
+						state = "collapsed"
+					}
+					return LeaderActionResult{StatusMsg: "Sidebar " + state}
+				},
+			},
+			{
+				Key: "f", Desc: "find table (telescope)", Group: "search",
+				Action: func(a *App) LeaderActionResult {
+					tables := a.graph.TableNames()
+					if len(tables) == 0 {
+						return LeaderActionResult{StatusMsg: "No tables loaded"}
+					}
+					a.tablePicker.Show(tables, &a.graph, a.width, a.height)
 					return LeaderActionResult{}
 				},
 			},

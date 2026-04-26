@@ -121,6 +121,8 @@ func (h *HelpOverlay) buildLines() {
 			{"<Space>bn", "Next buffer"},
 			{"<Space>bp", "Previous buffer"},
 			{"<Space>b1-9", "Jump to buffer N"},
+			{"<Space>tt", "Toggle sidebar"},
+			{"<Space>tf", "Find table (telescope)"},
 			{"<Space>r", "Refresh schema"},
 			{"<Space>c", "Switch connection"},
 			{"<Space>q", "Quit"},

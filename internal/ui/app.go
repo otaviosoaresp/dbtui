@@ -79,12 +79,14 @@ type App struct {
 	commandLine   CommandLine
 	sqlEditor     SQLEditor
 	recordView    RecordView
-	columnPicker  ColumnPicker
-	bufferPicker  BufferPicker
-	leaderRoot    *LeaderNode
-	leaderCurrent *LeaderNode
-	leaderPath    string
-	whichKey      WhichKey
+	columnPicker     ColumnPicker
+	bufferPicker     BufferPicker
+	tablePicker      TablePicker
+	sidebarCollapsed bool
+	leaderRoot       *LeaderNode
+	leaderCurrent    *LeaderNode
+	leaderPath       string
+	whichKey         WhichKey
 	editInput     textinput.Model
 	editColumn    string
 	editOriginal  string
@@ -150,6 +152,7 @@ func NewApp(pool *pgxpool.Pool) App {
 		sqlEditor:    NewSQLEditor(),
 		columnPicker: NewColumnPicker(),
 		bufferPicker: NewBufferPicker(),
+		tablePicker:  NewTablePicker(),
 		leaderRoot:   buildLeaderRoot(),
 		whichKey:     NewWhichKey(),
 		palette:      NewPalette(),
@@ -251,6 +254,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.bufferPicker, cmd = a.bufferPicker.Update(msg)
 			if !a.bufferPicker.Visible() {
 				return a.handleBufferPickerResult(a.bufferPicker.Result()), cmd
+			}
+			return a, cmd
+		}
+		if a.tablePicker.Visible() {
+			var cmd tea.Cmd
+			a.tablePicker, cmd = a.tablePicker.Update(msg)
+			if !a.tablePicker.Visible() && a.tablePicker.Selected() != "" {
+				selectCmd := a.selectTable(a.tablePicker.Selected())
+				return a, tea.Batch(cmd, selectCmd)
 			}
 			return a, cmd
 		}
@@ -1417,6 +1429,9 @@ func (a *App) updateLayout() {
 }
 
 func (a App) calculateTableListWidth() int {
+	if a.sidebarCollapsed {
+		return 0
+	}
 	switch {
 	case a.width >= 100:
 		return a.width / 4
@@ -1447,6 +1462,9 @@ func (a App) View() string {
 	}
 	if a.bufferPicker.Visible() {
 		return a.bufferPicker.View()
+	}
+	if a.tablePicker.Visible() {
+		return a.tablePicker.View()
 	}
 	if a.recordView.Visible() {
 		return a.recordView.View()
