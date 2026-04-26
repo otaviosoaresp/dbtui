@@ -1,6 +1,8 @@
 package widgets
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -371,7 +373,7 @@ func (t Table) View() string {
 }
 
 func (t Table) ExpandedCellView() string {
-	value := t.CursorCellValue()
+	value := prettyJSONIfPossible(t.CursorCellValue())
 	col := t.CursorColumnName()
 	header := fmt.Sprintf(" %s (row %d) ", col, t.cursorRow+1)
 
@@ -382,6 +384,22 @@ func (t Table) ExpandedCellView() string {
 		Height(t.height - 2)
 
 	return style.Render(header + "\n\n" + value)
+}
+
+func prettyJSONIfPossible(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if len(trimmed) == 0 {
+		return s
+	}
+	first := trimmed[0]
+	if first != '{' && first != '[' {
+		return s
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, []byte(trimmed), "", "  "); err != nil {
+		return s
+	}
+	return buf.String()
 }
 
 func (t Table) renderHeader() string {

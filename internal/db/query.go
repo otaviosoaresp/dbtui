@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -470,6 +471,10 @@ func formatValue(v any) string {
 		return string(val)
 	case time.Time:
 		return val.Format("2006-01-02 15:04:05")
+	case map[string]any:
+		return marshalJSON(val)
+	case []any:
+		return marshalJSON(val)
 	default:
 		str := fmt.Sprintf("%v", val)
 		if isNumericStruct(str) {
@@ -477,6 +482,14 @@ func formatValue(v any) string {
 		}
 		return str
 	}
+}
+
+func marshalJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(b)
 }
 
 func isNumericStruct(s string) bool {
