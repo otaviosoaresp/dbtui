@@ -95,6 +95,27 @@ func buildLeaderRoot() *LeaderNode {
 		Children: []*LeaderNode{
 			bufferNode,
 			{
+				Key: "r", Desc: "refresh schema", Group: "database",
+				Action: func(a *App) LeaderActionResult {
+					if a.loading || a.tableList.filtering {
+						return LeaderActionResult{}
+					}
+					a.loading = true
+					return LeaderActionResult{
+						Cmd:       a.refreshSchemaCmd(),
+						StatusMsg: "Refreshing schema...",
+					}
+				},
+			},
+			{
+				Key: "c", Desc: "switch connection", Group: "database",
+				Action: func(a *App) LeaderActionResult {
+					return LeaderActionResult{
+						Cmd: func() tea.Msg { return SwitchConnectionMsg{} },
+					}
+				},
+			},
+			{
 				Key: "q", Desc: "quit", Group: "app",
 				Action: func(a *App) LeaderActionResult {
 					return LeaderActionResult{Cmd: tea.Quit}

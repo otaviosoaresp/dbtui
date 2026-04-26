@@ -709,16 +709,6 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.tableList.StartFiltering()
 			return a, nil
 		}
-	case "R":
-		if !a.loading && !a.tableList.filtering {
-			a.loading = true
-			a.statusMsg = "Refreshing schema..."
-			return a, a.refreshSchemaCmd()
-		}
-	case "C":
-		return a, func() tea.Msg {
-			return SwitchConnectionMsg{}
-		}
 	case "?":
 		a.help.SetSize(a.width, a.height)
 		a.help.Toggle()
