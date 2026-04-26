@@ -80,6 +80,9 @@ type App struct {
 	sqlEditor     SQLEditor
 	recordView    RecordView
 	columnPicker  ColumnPicker
+	bufferPicker  BufferPicker
+	leaderPending bool
+	leaderBuf     string
 	editInput     textinput.Model
 	editColumn    string
 	editOriginal  string
@@ -144,6 +147,7 @@ func NewApp(pool *pgxpool.Pool) App {
 		commandLine:  NewCommandLine(),
 		sqlEditor:    NewSQLEditor(),
 		columnPicker: NewColumnPicker(),
+		bufferPicker: NewBufferPicker(),
 		palette:      NewPalette(),
 		aiPrompt:     NewAIPrompt(),
 		aiProvider:   aiProvider,
@@ -235,6 +239,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.dg().JumpToColumn(a.columnPicker.Selected())
 					a.statusMsg = fmt.Sprintf("Column: %s", a.columnPicker.Selected())
 				}
+			}
+			return a, cmd
+		}
+		if a.bufferPicker.Visible() {
+			var cmd tea.Cmd
+			a.bufferPicker, cmd = a.bufferPicker.Update(msg)
+			if !a.bufferPicker.Visible() {
+				return a.handleBufferPickerResult(a.bufferPicker.Result()), cmd
 			}
 			return a, cmd
 		}
@@ -497,7 +509,125 @@ func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.handleModalKeyPress(msg)
 	}
 
+	if a.leaderPending {
+		return a.handleLeaderKey(msg)
+	}
+
+	if msg.String() == " " {
+		a.leaderPending = true
+		a.leaderBuf = ""
+		a.statusMsg = "<leader> b:buffer  ?:help (esc cancel)"
+		return a, nil
+	}
+
 	return a.handleNormalMode(msg)
+}
+
+func (a App) handleLeaderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	if key == "esc" {
+		a.leaderPending = false
+		a.leaderBuf = ""
+		a.statusMsg = ""
+		return a, nil
+	}
+
+	a.leaderBuf += key
+
+	switch a.leaderBuf {
+	case "?":
+		a.leaderPending = false
+		a.leaderBuf = ""
+		a.statusMsg = "leader: <space>b{b,d,n,p,1-9}=buffer ops"
+		return a, nil
+	case "b":
+		return a, nil
+	case "bb":
+		a.leaderPending = false
+		a.leaderBuf = ""
+		a.bufferPicker.Show(a.buffers, a.activeBuffer, a.width, a.height)
+		return a, nil
+	case "bd":
+		a.leaderPending = false
+		a.leaderBuf = ""
+		if len(a.buffers) <= 1 {
+			a.statusMsg = "Cannot close last buffer"
+			return a, nil
+		}
+		closed := a.buffers[a.activeBuffer].Name
+		a.closeActiveBuffer()
+		a.statusMsg = fmt.Sprintf("Closed: %s", closed)
+		return a, nil
+	case "bn":
+		a.leaderPending = false
+		a.leaderBuf = ""
+		if len(a.buffers) > 1 {
+			a.activeBuffer = (a.activeBuffer + 1) % len(a.buffers)
+			a.statusMsg = fmt.Sprintf("Buffer: %s [%d/%d]", a.buffers[a.activeBuffer].Name, a.activeBuffer+1, len(a.buffers))
+			a.updateLayout()
+		}
+		return a, nil
+	case "bp":
+		a.leaderPending = false
+		a.leaderBuf = ""
+		if len(a.buffers) > 1 {
+			a.activeBuffer = (a.activeBuffer - 1 + len(a.buffers)) % len(a.buffers)
+			a.statusMsg = fmt.Sprintf("Buffer: %s [%d/%d]", a.buffers[a.activeBuffer].Name, a.activeBuffer+1, len(a.buffers))
+			a.updateLayout()
+		}
+		return a, nil
+	}
+
+	if strings.HasPrefix(a.leaderBuf, "b") && len(a.leaderBuf) == 2 {
+		ch := a.leaderBuf[1]
+		if ch >= '1' && ch <= '9' {
+			idx := int(ch - '1')
+			a.leaderPending = false
+			a.leaderBuf = ""
+			if idx < len(a.buffers) {
+				a.activeBuffer = idx
+				a.statusMsg = fmt.Sprintf("Buffer: %s [%d/%d]", a.buffers[idx].Name, idx+1, len(a.buffers))
+				a.updateLayout()
+			} else {
+				a.statusMsg = fmt.Sprintf("No buffer at %d", idx+1)
+			}
+			return a, nil
+		}
+	}
+
+	a.leaderPending = false
+	a.leaderBuf = ""
+	a.statusMsg = fmt.Sprintf("Unknown leader sequence: <space>%s", key)
+	return a, nil
+}
+
+func (a App) handleBufferPickerResult(result BufferPickerResult) App {
+	switch result.Action {
+	case BufferPickerSwitch:
+		if result.Index >= 0 && result.Index < len(a.buffers) {
+			a.activeBuffer = result.Index
+			a.statusMsg = fmt.Sprintf("Buffer: %s [%d/%d]", a.buffers[result.Index].Name, result.Index+1, len(a.buffers))
+			a.updateLayout()
+		}
+	case BufferPickerDelete:
+		if result.Index < 0 || result.Index >= len(a.buffers) {
+			return a
+		}
+		if len(a.buffers) <= 1 {
+			a.statusMsg = "Cannot close last buffer"
+			return a
+		}
+		closed := a.buffers[result.Index].Name
+		a.buffers = append(a.buffers[:result.Index], a.buffers[result.Index+1:]...)
+		if a.activeBuffer >= len(a.buffers) {
+			a.activeBuffer = len(a.buffers) - 1
+		} else if result.Index < a.activeBuffer {
+			a.activeBuffer--
+		}
+		a.updateLayout()
+		a.statusMsg = fmt.Sprintf("Closed: %s", closed)
+	}
+	return a
 }
 
 func (a App) handleDeleteConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1354,6 +1484,9 @@ func (a App) View() string {
 	}
 	if a.columnPicker.Visible() {
 		return a.columnPicker.View()
+	}
+	if a.bufferPicker.Visible() {
+		return a.bufferPicker.View()
 	}
 	if a.recordView.Visible() {
 		return a.recordView.View()

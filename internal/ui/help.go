@@ -115,6 +115,14 @@ func (h *HelpOverlay) buildLines() {
 		{"AI", []struct{ k, d string }{
 			{"P", "Open command palette"},
 		}},
+		{"Leader (<Space>)", []struct{ k, d string }{
+			{"<Space>bb", "Buffer picker (fuzzy)"},
+			{"<Space>bd", "Close active buffer"},
+			{"<Space>bn", "Next buffer"},
+			{"<Space>bp", "Previous buffer"},
+			{"<Space>b1-9", "Jump to buffer N"},
+			{"<Space>?", "Show leader hint"},
+		}},
 		{"Other", []struct{ k, d string }{
 			{"C", "Switch database connection"},
 			{"R", "Refresh schema from database"},
