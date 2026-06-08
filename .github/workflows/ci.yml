@@ -32,6 +32,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install psql client
+        run: apt-get update && apt-get install -y postgresql-client
+
       - name: Init test database
         env:
           PGHOST: localhost
