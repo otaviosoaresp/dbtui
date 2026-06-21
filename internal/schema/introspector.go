@@ -17,20 +17,42 @@ const (
 )
 
 type ColumnInfo struct {
-	Name       string
-	DataType   string
-	IsNullable bool
-	HasDefault bool
-	IsPK       bool
-	IsFK       bool
+	Name        string
+	DataType    string
+	IsNullable  bool
+	HasDefault  bool
+	DefaultExpr string
+	Comment     string
+	Position    int
+	IsPK        bool
+	IsFK        bool
 }
 
 type TableInfo struct {
-	Schema  string
-	Name    string
-	Type    TableType
-	Columns []ColumnInfo
-	HasPK   bool
+	Schema            string
+	Name              string
+	Type              TableType
+	Columns           []ColumnInfo
+	HasPK             bool
+	Comment           string
+	Indexes           []IndexInfo
+	UniqueConstraints []Constraint
+	CheckConstraints  []Constraint
+	ViewDefinition    string
+}
+
+type IndexInfo struct {
+	Name       string
+	Method     string
+	IsUnique   bool
+	IsPrimary  bool
+	Columns    []string
+	Definition string
+}
+
+type Constraint struct {
+	Name       string
+	Definition string
 }
 
 type ForeignKey struct {
