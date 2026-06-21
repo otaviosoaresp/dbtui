@@ -79,6 +79,7 @@ type App struct {
 	commandLine   CommandLine
 	sqlEditor     SQLEditor
 	recordView    RecordView
+	tableInfo     TableInfo
 	columnPicker     ColumnPicker
 	bufferPicker     BufferPicker
 	tablePicker      TablePicker
@@ -275,6 +276,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		}
+		if a.tableInfo.Visible() {
+			switch msg.String() {
+			case "esc", "q":
+				a.tableInfo.Hide()
+			case "y":
+				if a.tableInfo.ActiveTabIsDDL() {
+					clipboard.WriteAll(a.tableInfo.DDLText())
+				}
+			default:
+				a.tableInfo = a.tableInfo.Update(msg)
+			}
+			return a, nil
+		}
 		if a.help.Visible() {
 			if msg.String() == "?" || msg.String() == "esc" || msg.String() == "q" {
 				a.help.Hide()
@@ -423,6 +437,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AIPreviewActionMsg:
 		return a.handleAIPreviewAction(msg)
+
+	case TableInfoLoadedMsg:
+		if msg.Err != nil {
+			a.tableInfo.SetError(msg.Err)
+		} else {
+			a.tableInfo.Show(msg.Info, msg.ForeignKeys)
+		}
+		return a, nil
 	}
 
 	return a.routeToFocused(msg)
@@ -1488,6 +1510,9 @@ func (a App) View() string {
 	if a.recordView.Visible() {
 		return a.recordView.View()
 	}
+	if a.tableInfo.Visible() {
+		return a.tableInfo.View()
+	}
 	if a.help.Visible() {
 		return a.help.View()
 	}
@@ -1887,6 +1912,15 @@ func (a App) refreshSchemaCmd() tea.Cmd {
 	return func() tea.Msg {
 		graph, err := schema.LoadSchema(context.Background(), a.pool)
 		return SchemaRefreshedMsg{Graph: graph, Err: err}
+	}
+}
+
+func (a App) loadTableInfoCmd(schemaName, tableName, fkKey string) tea.Cmd {
+	pool := a.pool
+	fks := a.graph.FKsForTable(fkKey)
+	return func() tea.Msg {
+		info, err := schema.GetTableInfo(context.Background(), pool, schemaName, tableName)
+		return TableInfoLoadedMsg{Info: info, ForeignKeys: fks, Err: err}
 	}
 }
 

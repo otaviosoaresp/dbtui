@@ -93,3 +93,9 @@ type AIResponseMsg struct {
 	Usage  ai.TokenUsage
 	Err    error
 }
+
+type TableInfoLoadedMsg struct {
+	Info        schema.TableInfo
+	ForeignKeys []schema.ForeignKey
+	Err         error
+}
