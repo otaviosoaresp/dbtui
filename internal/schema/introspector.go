@@ -357,6 +357,139 @@ func detectPKs(graph *SchemaGraph) {
 	}
 }
 
+const tableDetailQuery = `
+SELECT c.relkind::text,
+       COALESCE(obj_description(c.oid), '') AS table_comment,
+       CASE WHEN c.relkind IN ('v','m') THEN COALESCE(pg_get_viewdef(c.oid, true), '') ELSE '' END AS view_def
+FROM pg_class c
+JOIN pg_namespace n ON c.relnamespace = n.oid
+WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r','v','m')
+`
+
+const columnDetailQuery = `
+SELECT a.attname,
+       pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+       NOT a.attnotnull AS is_nullable,
+       a.atthasdef AS has_default,
+       COALESCE(pg_get_expr(d.adbin, d.adrelid), '') AS default_expr,
+       COALESCE(col_description(c.oid, a.attnum), '') AS col_comment,
+       a.attnum AS position,
+       EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conrelid = c.oid AND con.contype = 'p' AND a.attnum = ANY(con.conkey)) AS is_pk
+FROM pg_attribute a
+JOIN pg_class c ON a.attrelid = c.oid
+JOIN pg_namespace n ON c.relnamespace = n.oid
+LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
+WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum
+`
+
+const indexDetailQuery = `
+SELECT ic.relname AS index_name, am.amname AS method, i.indisunique AS is_unique, i.indisprimary AS is_primary,
+       pg_get_indexdef(i.indexrelid) AS definition,
+       ARRAY(SELECT pg_get_indexdef(i.indexrelid, k + 1, true) FROM generate_subscripts(i.indkey, 1) AS k ORDER BY k) AS columns
+FROM pg_index i
+JOIN pg_class ic ON ic.oid = i.indexrelid
+JOIN pg_class tc ON tc.oid = i.indrelid
+JOIN pg_namespace n ON tc.relnamespace = n.oid
+JOIN pg_am am ON am.oid = ic.relam
+WHERE n.nspname = $1 AND tc.relname = $2
+ORDER BY ic.relname
+`
+
+const constraintDetailQuery = `
+SELECT con.conname, con.contype, pg_get_constraintdef(con.oid) AS definition
+FROM pg_constraint con
+JOIN pg_class c ON c.oid = con.conrelid
+JOIN pg_namespace n ON c.relnamespace = n.oid
+WHERE n.nspname = $1 AND c.relname = $2 AND con.contype IN ('u','c')
+ORDER BY con.conname
+`
+
+func GetTableInfo(ctx context.Context, pool *pgxpool.Pool, schemaName, tableName string) (TableInfo, error) {
+	info := TableInfo{Schema: schemaName, Name: tableName}
+	var relkind, comment, viewDef string
+	row := pool.QueryRow(ctx, tableDetailQuery, schemaName, tableName)
+	if err := row.Scan(&relkind, &comment, &viewDef); err != nil {
+		return info, fmt.Errorf("table detail: %w", err)
+	}
+	switch relkind {
+	case "v":
+		info.Type = TableTypeView
+	case "m":
+		info.Type = TableTypeMaterializedView
+	default:
+		info.Type = TableTypeRegular
+	}
+	info.Comment = comment
+	info.ViewDefinition = viewDef
+	if err := loadColumnDetail(ctx, pool, schemaName, tableName, &info); err != nil {
+		return info, fmt.Errorf("column detail: %w", err)
+	}
+	if err := loadIndexDetail(ctx, pool, schemaName, tableName, &info); err != nil {
+		return info, fmt.Errorf("index detail: %w", err)
+	}
+	if err := loadConstraintDetail(ctx, pool, schemaName, tableName, &info); err != nil {
+		return info, fmt.Errorf("constraint detail: %w", err)
+	}
+	return info, nil
+}
+
+func loadColumnDetail(ctx context.Context, pool *pgxpool.Pool, schemaName, tableName string, info *TableInfo) error {
+	rows, err := pool.Query(ctx, columnDetailQuery, schemaName, tableName)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var col ColumnInfo
+		if err := rows.Scan(&col.Name, &col.DataType, &col.IsNullable, &col.HasDefault, &col.DefaultExpr, &col.Comment, &col.Position, &col.IsPK); err != nil {
+			return err
+		}
+		if col.IsPK {
+			info.HasPK = true
+		}
+		info.Columns = append(info.Columns, col)
+	}
+	return rows.Err()
+}
+
+func loadIndexDetail(ctx context.Context, pool *pgxpool.Pool, schemaName, tableName string, info *TableInfo) error {
+	rows, err := pool.Query(ctx, indexDetailQuery, schemaName, tableName)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var idx IndexInfo
+		if err := rows.Scan(&idx.Name, &idx.Method, &idx.IsUnique, &idx.IsPrimary, &idx.Definition, &idx.Columns); err != nil {
+			return err
+		}
+		info.Indexes = append(info.Indexes, idx)
+	}
+	return rows.Err()
+}
+
+func loadConstraintDetail(ctx context.Context, pool *pgxpool.Pool, schemaName, tableName string, info *TableInfo) error {
+	rows, err := pool.Query(ctx, constraintDetailQuery, schemaName, tableName)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name, contype, def string
+		if err := rows.Scan(&name, &contype, &def); err != nil {
+			return err
+		}
+		c := Constraint{Name: name, Definition: def}
+		if contype == "u" {
+			info.UniqueConstraints = append(info.UniqueConstraints, c)
+		} else {
+			info.CheckConstraints = append(info.CheckConstraints, c)
+		}
+	}
+	return rows.Err()
+}
+
 func qualifiedName(schema, table string) string {
 	if schema == "public" {
 		return table
