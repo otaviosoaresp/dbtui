@@ -50,3 +50,32 @@ func TestBuildDDLView(t *testing.T) {
 		t.Errorf("unexpected view DDL: %s", ddl)
 	}
 }
+
+func TestBuildDDLMaterializedView(t *testing.T) {
+	v := TableInfo{Schema: "public", Name: "order_summary", Type: TableTypeMaterializedView, ViewDefinition: "SELECT 1"}
+	ddl := BuildDDL(v)
+	if !strings.Contains(ddl, "CREATE MATERIALIZED VIEW public.order_summary AS") {
+		t.Errorf("unexpected matview DDL: %s", ddl)
+	}
+	if !strings.Contains(ddl, "WITH DATA") {
+		t.Errorf("matview DDL missing WITH DATA: %s", ddl)
+	}
+}
+
+func TestBuildDDLSkipsConstraintBackedIndex(t *testing.T) {
+	tbl := TableInfo{
+		Schema: "public", Name: "accounts", Type: TableTypeRegular,
+		Columns:           []ColumnInfo{{Name: "username", DataType: "text", IsNullable: false}},
+		UniqueConstraints: []Constraint{{Name: "accounts_username_key", Definition: "UNIQUE (username)"}},
+		Indexes: []IndexInfo{
+			{Name: "accounts_username_key", IsUnique: true, IsConstraint: true, Columns: []string{"username"}, Definition: "CREATE UNIQUE INDEX accounts_username_key ON public.accounts USING btree (username)"},
+		},
+	}
+	ddl := BuildDDL(tbl)
+	if strings.Contains(ddl, "CREATE UNIQUE INDEX accounts_username_key") {
+		t.Errorf("constraint-backed index should not be re-emitted:\n%s", ddl)
+	}
+	if !strings.Contains(ddl, "CONSTRAINT accounts_username_key UNIQUE (username)") {
+		t.Errorf("unique constraint missing:\n%s", ddl)
+	}
+}

@@ -403,3 +403,27 @@ func TestNewSchemaTypesCompose(t *testing.T) {
 		t.Fatal("new fields not wired")
 	}
 }
+
+func TestGetTableInfoConstraints(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	info, err := GetTableInfo(context.Background(), pool, "public", "accounts")
+	if err != nil {
+		t.Fatalf("GetTableInfo accounts: %v", err)
+	}
+	if len(info.UniqueConstraints) == 0 {
+		t.Error("expected a unique constraint on accounts")
+	}
+	if len(info.CheckConstraints) == 0 {
+		t.Error("expected a check constraint on accounts")
+	}
+	var flaggedBackingIndex bool
+	for _, idx := range info.Indexes {
+		if idx.Name == "accounts_username_key" && idx.IsConstraint {
+			flaggedBackingIndex = true
+		}
+	}
+	if !flaggedBackingIndex {
+		t.Error("expected unique-constraint backing index to be flagged IsConstraint")
+	}
+}
