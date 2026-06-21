@@ -344,3 +344,22 @@ func TestLoadSchema_HasDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestNewSchemaTypesCompose(t *testing.T) {
+	col := ColumnInfo{Name: "id", DefaultExpr: "nextval('s')", Comment: "pk", Position: 1}
+	idx := IndexInfo{Name: "t_pkey", Method: "btree", IsUnique: true, IsPrimary: true, Columns: []string{"id"}, Definition: "CREATE UNIQUE INDEX t_pkey ON t USING btree (id)"}
+	uniq := Constraint{Name: "t_email_key", Definition: "UNIQUE (email)"}
+	chk := Constraint{Name: "t_age_chk", Definition: "CHECK (age >= 0)"}
+	tbl := TableInfo{
+		Name:              "t",
+		Comment:           "table comment",
+		Columns:           []ColumnInfo{col},
+		Indexes:           []IndexInfo{idx},
+		UniqueConstraints: []Constraint{uniq},
+		CheckConstraints:  []Constraint{chk},
+		ViewDefinition:    "",
+	}
+	if tbl.Columns[0].DefaultExpr != "nextval('s')" || tbl.Indexes[0].Method != "btree" {
+		t.Fatal("new fields not wired")
+	}
+}
