@@ -93,6 +93,7 @@ type App struct {
 	editConfirm   bool
 	editSQL       string
 	deleteConfirm bool
+	quitConfirm   bool
 	deletePKs     []PKValue
 	deleteTable   string
 	rowForm       RowForm
@@ -521,6 +522,10 @@ func (a App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.handleDeleteConfirm(msg)
 	}
 
+	if a.quitConfirm {
+		return a.handleQuitConfirm(msg)
+	}
+
 	if a.mode != ModeNormal {
 		return a.handleModalKeyPress(msg)
 	}
@@ -660,6 +665,18 @@ func (a App) handleDeleteConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
+func (a App) handleQuitConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		return a, tea.Quit
+	case "n", "N", "esc":
+		a.quitConfirm = false
+		a.statusMsg = "Quit cancelled"
+		return a, nil
+	}
+	return a, nil
+}
+
 func (a App) handleRowFormConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
@@ -687,7 +704,9 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
 		if !a.tableList.filtering && !a.scriptList.IsCreating() {
-			return a, tea.Quit
+			a.quitConfirm = true
+			a.statusMsg = ""
+			return a, nil
 		}
 	case "tab":
 		switch a.focus {
@@ -1606,6 +1625,11 @@ func (a App) renderStatusBar() string {
 	if a.deleteConfirm {
 		hints = append(hints, modeStyle.Render(" -- DELETE CONFIRM -- "))
 		hints = append(hints, keyStyle.Render("[y]")+descStyle.Render(" Confirm"), keyStyle.Render("[n]")+descStyle.Render(" Cancel"))
+		return bgStyle.Render(lipgloss.JoinHorizontal(lipgloss.Left, strings.Join(hints, " ")+" "+descStyle.Render(a.statusMsg)))
+	}
+	if a.quitConfirm {
+		hints = append(hints, modeStyle.Render(" -- QUIT CONFIRM -- "))
+		hints = append(hints, keyStyle.Render("[y]")+descStyle.Render(" Quit"), keyStyle.Render("[n]")+descStyle.Render(" Cancel"))
 		return bgStyle.Render(lipgloss.JoinHorizontal(lipgloss.Left, strings.Join(hints, " ")+" "+descStyle.Render(a.statusMsg)))
 	}
 	if a.rowForm.Visible() {
