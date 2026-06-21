@@ -345,6 +345,46 @@ func TestLoadSchema_HasDefault(t *testing.T) {
 	}
 }
 
+func TestGetTableInfo(t *testing.T) {
+	pool := testPool(t)
+	info, err := GetTableInfo(context.Background(), pool, "public", "orders")
+	if err != nil {
+		t.Fatalf("GetTableInfo: %v", err)
+	}
+	if len(info.Columns) == 0 {
+		t.Fatal("no columns")
+	}
+	var pkCount int
+	for _, c := range info.Columns {
+		if c.Position == 0 {
+			t.Errorf("column %s has zero position", c.Name)
+		}
+		if c.IsPK {
+			pkCount++
+		}
+	}
+	if pkCount == 0 {
+		t.Error("expected at least one PK column on orders")
+	}
+	if len(info.Indexes) == 0 {
+		t.Error("expected at least the primary-key index")
+	}
+}
+
+func TestGetTableInfoView(t *testing.T) {
+	pool := testPool(t)
+	info, err := GetTableInfo(context.Background(), pool, "public", "active_customers")
+	if err != nil {
+		t.Fatalf("GetTableInfo view: %v", err)
+	}
+	if info.Type != TableTypeView {
+		t.Errorf("expected view type, got %v", info.Type)
+	}
+	if info.ViewDefinition == "" {
+		t.Error("expected non-empty view definition")
+	}
+}
+
 func TestNewSchemaTypesCompose(t *testing.T) {
 	col := ColumnInfo{Name: "id", DefaultExpr: "nextval('s')", Comment: "pk", Position: 1}
 	idx := IndexInfo{Name: "t_pkey", Method: "btree", IsUnique: true, IsPrimary: true, Columns: []string{"id"}, Definition: "CREATE UNIQUE INDEX t_pkey ON t USING btree (id)"}
