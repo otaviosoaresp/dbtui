@@ -891,6 +891,14 @@ func (a App) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 		}
+	case "t":
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" && a.dg().TableName() != "query" {
+			name := a.dg().TableName()
+			schemaName, tableName := splitQualified(name)
+			a.tableInfo.SetSize(a.width, a.height)
+			a.tableInfo.SetLoading(tableName)
+			return a, a.loadTableInfoCmd(schemaName, tableName, name)
+		}
 	case "v":
 		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" {
 			columns := a.dg().Columns()
@@ -1940,11 +1948,19 @@ func truncateForStatus(s string, max int) string {
 	return s[:max-3] + "..."
 }
 
+func splitQualified(qualified string) (string, string) {
+	if i := strings.LastIndex(qualified, "."); i >= 0 {
+		return qualified[:i], qualified[i+1:]
+	}
+	return "public", qualified
+}
+
 func (a *App) buildPaletteActions() []PaletteAction {
 	return []PaletteAction{
 		{Label: "AI: Generate SQL", Category: "AI", ID: "ai_generate"},
 		{Label: "AI: History", Category: "AI", ID: "ai_history"},
 		{Label: "AI: Configure Provider", Category: "Config", ID: "ai_config"},
+		{Label: "Table Info", Category: "View", ID: "table_info"},
 	}
 }
 
@@ -1983,6 +1999,17 @@ func (a App) handlePaletteSelect(msg PaletteSelectMsg) (tea.Model, tea.Cmd) {
 		}
 		a.palette.SetActions(actions)
 		a.palette.Show(a.width, a.height)
+		return a, nil
+	}
+
+	if msg.ActionID == "table_info" {
+		if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" && a.dg().TableName() != "query" {
+			name := a.dg().TableName()
+			schemaName, tableName := splitQualified(name)
+			a.tableInfo.SetSize(a.width, a.height)
+			a.tableInfo.SetLoading(tableName)
+			return a, a.loadTableInfoCmd(schemaName, tableName, name)
+		}
 		return a, nil
 	}
 
