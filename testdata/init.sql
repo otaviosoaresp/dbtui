@@ -118,3 +118,12 @@ INSERT INTO employees (name, manager_id, department) VALUES
     ('Junior Dev', 4, 'Engineering');
 
 REFRESH MATERIALIZED VIEW order_summary;
+
+-- table with explicit UNIQUE and CHECK constraints (covers constraint introspection)
+CREATE TABLE accounts (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(50) NOT NULL,
+    balance NUMERIC(12,2) NOT NULL DEFAULT 0,
+    CONSTRAINT accounts_username_key UNIQUE (username),
+    CONSTRAINT accounts_balance_check CHECK (balance >= 0)
+);

@@ -42,12 +42,13 @@ type TableInfo struct {
 }
 
 type IndexInfo struct {
-	Name       string
-	Method     string
-	IsUnique   bool
-	IsPrimary  bool
-	Columns    []string
-	Definition string
+	Name         string
+	Method       string
+	IsUnique     bool
+	IsPrimary    bool
+	IsConstraint bool
+	Columns      []string
+	Definition   string
 }
 
 type Constraint struct {
@@ -385,6 +386,7 @@ ORDER BY a.attnum
 
 const indexDetailQuery = `
 SELECT ic.relname AS index_name, am.amname AS method, i.indisunique AS is_unique, i.indisprimary AS is_primary,
+       EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid) AS is_constraint,
        pg_get_indexdef(i.indexrelid) AS definition,
        ARRAY(SELECT pg_get_indexdef(i.indexrelid, k + 1, true) FROM generate_subscripts(i.indkey, 1) AS k ORDER BY k) AS columns
 FROM pg_index i
@@ -397,7 +399,7 @@ ORDER BY ic.relname
 `
 
 const constraintDetailQuery = `
-SELECT con.conname, con.contype, pg_get_constraintdef(con.oid) AS definition
+SELECT con.conname, con.contype::text, pg_get_constraintdef(con.oid) AS definition
 FROM pg_constraint con
 JOIN pg_class c ON c.oid = con.conrelid
 JOIN pg_namespace n ON c.relnamespace = n.oid
@@ -461,7 +463,7 @@ func loadIndexDetail(ctx context.Context, pool *pgxpool.Pool, schemaName, tableN
 	defer rows.Close()
 	for rows.Next() {
 		var idx IndexInfo
-		if err := rows.Scan(&idx.Name, &idx.Method, &idx.IsUnique, &idx.IsPrimary, &idx.Definition, &idx.Columns); err != nil {
+		if err := rows.Scan(&idx.Name, &idx.Method, &idx.IsUnique, &idx.IsPrimary, &idx.IsConstraint, &idx.Definition, &idx.Columns); err != nil {
 			return err
 		}
 		info.Indexes = append(info.Indexes, idx)

@@ -10,7 +10,7 @@ func BuildDDL(t TableInfo) string {
 	case TableTypeView:
 		return fmt.Sprintf("CREATE VIEW %s.%s AS\n%s", t.Schema, t.Name, t.ViewDefinition)
 	case TableTypeMaterializedView:
-		return fmt.Sprintf("CREATE MATERIALIZED VIEW %s.%s AS\n%s", t.Schema, t.Name, t.ViewDefinition)
+		return fmt.Sprintf("CREATE MATERIALIZED VIEW %s.%s AS\n%s\nWITH DATA", t.Schema, t.Name, t.ViewDefinition)
 	}
 	return buildTableDDL(t)
 }
@@ -41,7 +41,7 @@ func buildTableDDL(t TableInfo) string {
 	b.WriteString(strings.Join(lines, ",\n"))
 	b.WriteString("\n);\n")
 	for _, idx := range t.Indexes {
-		if idx.IsPrimary {
+		if idx.IsPrimary || idx.IsConstraint {
 			continue
 		}
 		fmt.Fprintf(&b, "%s;\n", idx.Definition)
