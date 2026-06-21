@@ -36,6 +36,8 @@ internal/ui/breadcrumb.go         -- navigation stack + breadcrumb trail
 internal/ui/filter.go             -- filter parsing (=, !=, >, <, LIKE, NULL) + filter list
 internal/ui/command_line.go       -- : command input, history, script tab-completion
 internal/ui/sql_editor.go         -- E multiline SQL editor (bubbles/textarea)
+internal/ui/table_info.go         -- table info overlay (tabbed: columns/indexes/constraints/FKs/DDL)
+internal/schema/ddl.go            -- CREATE TABLE DDL reconstruction
 internal/ui/record_view.go        -- v vertical record view
 internal/ui/column_picker.go      -- c fuzzy column jump
 internal/ui/help.go               -- ? help overlay
@@ -67,7 +69,7 @@ All async I/O runs as `tea.Cmd`. UI never blocks. Pattern:
 
 `AppMode` in app.go controls key routing:
 
-- `ModeNormal`: navigation keys (j/k/h/l/g/G/d/u), triggers (f/:/i/E/v/c/p)
+- `ModeNormal`: navigation keys (j/k/h/l/g/G/d/u), triggers (f/:/i/E/v/c/p/t)
 - `ModeFilter`: filter textinput active, Enter applies, Esc cancels
 - `ModeCommand`: command line active, Enter executes, Esc cancels
 - `ModeInsert`: cell edit textinput, Enter confirms, Esc cancels

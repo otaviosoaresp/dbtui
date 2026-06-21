@@ -162,6 +162,19 @@ func tableNode() *LeaderNode {
 					return LeaderActionResult{}
 				},
 			},
+			{
+				Key: "i", Desc: "table info", Group: "view",
+				Action: func(a *App) LeaderActionResult {
+					if a.focus == panelDataGrid && a.dg() != nil && a.dg().TableName() != "" && a.dg().TableName() != "query" {
+						name := a.dg().TableName()
+						schemaName, tableName := splitQualified(name)
+						a.tableInfo.SetSize(a.width, a.height)
+						a.tableInfo.SetLoading(tableName)
+						return LeaderActionResult{Cmd: a.loadTableInfoCmd(schemaName, tableName, name)}
+					}
+					return LeaderActionResult{}
+				},
+			},
 		},
 	}
 }

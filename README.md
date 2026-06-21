@@ -14,6 +14,7 @@ Navigate relational data by following FK references, previewing linked rows inli
 - **Column Ordering** -- Press `o` to cycle ASC/DESC/none. Ordered columns show a purple header with arrow indicators. Press `O` to clear all orders.
 - **Row Operations** -- Press `a` to add a row via vertical form, `A` to duplicate the current row, `D` to delete with confirmation. All mutations run within transactions.
 - **Visual Mode** -- Press `V` for Vim-style range selection or `m` to toggle individual row marks. `D` deletes all selected rows in a single transaction. `Y` copies all selected rows to clipboard.
+- **Table Info** -- Press `t` to open a DBeaver-style panel: columns (type, nullability, default, PK/FK), indexes, constraints, foreign keys, and reconstructed DDL. `h`/`l` switch tabs, `y` copies the DDL.
 - **Record View** -- Press `v` to see the current row as a vertical key-value list. Useful for tables with many columns.
 - **Inline Editing** -- Press `i` to edit a cell value. Confirmation dialog shows the UPDATE SQL before executing within a transaction.
 - **SQL Editor** -- Press `E` to open a multiline SQL editor. Ctrl+e executes, Ctrl+s saves as script.

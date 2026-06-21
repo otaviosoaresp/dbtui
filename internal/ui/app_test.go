@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/otaviosoaresp/dbtui/internal/schema"
 )
 
@@ -131,3 +132,15 @@ func TestBuildPKFromRow_UnknownTable(t *testing.T) {
 }
 
 var _ = strings.Contains
+
+func TestPressTOpensTableInfo(t *testing.T) {
+	a := App{focus: panelDataGrid, width: 120, height: 40, graph: schema.SchemaGraph{ForeignKeys: map[string][]schema.ForeignKey{}}}
+	dg := NewDataGrid(nil)
+	dg.tableName = "users"
+	a.buffers = []BufferInfo{{Name: "users", Grid: dg}}
+	model, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	got := model.(App)
+	if !got.tableInfo.Visible() {
+		t.Fatal("pressing t should open the table-info panel")
+	}
+}
